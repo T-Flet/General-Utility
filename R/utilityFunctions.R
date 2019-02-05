@@ -1,33 +1,5 @@
 #### Generic Useful Functions
 
-## Functions to go between Factor and Int
-numToInt <- function(x) {
-    as.integer(unlist(round(x)))
-}
-
-numToFac <- function(x, levels) {
-    factor(levels[numToInt(x)], levels)
-}
-
-# Simple check:
-#all(data == toClassFac(toClassInt(data)))
-
-
-
-# Partition a data frame into either a given number of random subsets
-# or into random subsets of given proportional sizes and names
-# Set the argument 'parts' to an integer for the former and to a named list of proportions adding up to 1 for the latter
-splitBy <- function(df, parts) {
-    labels <- if (length(parts) == 1) {
-        cut(seq(nrow(df)), parts, labels = 1:parts)
-    } else {
-        cut(seq(nrow(df)), nrow(df) * cumsum(c(0, parts)), labels = names(parts))
-    }
-    split(df, sample(labels))
-}
-
-
-
 # Make a Cross-Validation table and produce a summary of it
 xTWithSumm <- function(real, predicted) {
     xtab <- table(real, predicted)
@@ -71,4 +43,55 @@ xTSummary <- function(xtab, labels = NULL) {
     }
 
     summary
+}
+
+
+
+library(tidyverse)
+## Runner function for multiple tuning parameter values
+# Inputs:
+#   n - number of tests to perform for each tuning parameters' combination
+#   target - result to score against when comparing results
+#   methodF - function wrapper around the method to test, with only the parameters to tune as arguments
+#   params - (possibly named) list of tuning parameter values to test (all combinations will be produced)
+# Output: a tibble of tuning parameters and result values, in ascending order of mean deviation from target
+# NOTE: the functions in stochGradDesc.R are typical arguments to this function
+tuningHelper <- function(n = 100, target, methodF, params) {
+    pCombs <- do.call(crossing, params) %>% simplify2array
+    map(1:nrow(pCombs), function(i) {
+        map(1:n, function(unused) {
+            out <- methodF(pCombs[i,])
+            out$theta[nrow(out$theta),] - target
+        }) %>% simplify2array %>% rowMeans %>% c(pCombs[i,], .)
+    }) %>% simplify2array %>% t %>% as.tibble %>%
+        mutate(mean = .[, 2:ncol(.)] %>% abs %>% rowMeans) %>%
+        arrange(mean)
+}
+
+
+
+## Functions to go between Factor and Int
+numToInt <- function(x) {
+    as.integer(unlist(round(x)))
+}
+
+numToFac <- function(x, levels) {
+    factor(levels[numToInt(x)], levels)
+}
+
+# Simple check:
+#all(data == toClassFac(toClassInt(data)))
+
+
+
+# Partition a data frame into either a given number of random subsets
+# or into random subsets of given proportional sizes and names
+# Set the argument 'parts' to an integer for the former and to a named list of proportions adding up to 1 for the latter
+splitBy <- function(df, parts) {
+    labels <- if (length(parts) == 1) {
+        cut(seq(nrow(df)), parts, labels = 1:parts)
+    } else {
+        cut(seq(nrow(df)), nrow(df) * cumsum(c(0, parts)), labels = names(parts))
+    }
+    split(df, sample(labels))
 }
