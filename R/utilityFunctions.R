@@ -95,3 +95,39 @@ splitBy <- function(df, parts) {
     }
     split(df, sample(labels))
 }
+
+
+
+# Plot the useful residual plots for a model on a pre-determined grid
+# (Histogram, vs reponse and vs any explanatory of interest, provided in the ...)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(moderndive)
+residPlotGrid <- function(mod, nrow, ncol, response, ...) {
+    rExp <- sym(paste(response, "_hat", sep = ""))
+    eExps <- ensyms(...)
+
+    regPs <- get_regression_points(mod)
+    baseGgp <- ggplot(regPs)
+
+    hist <- baseGgp + geom_histogram(aes(residual), color = "white") + labs(x = "Residual")
+
+    resp <- baseGgp + geom_point(aes(!!rExp, residual)) +
+        labs(x = "Fitted Value", y = "Residual") +
+        geom_hline(yintercept = 0, col = "blue", size = 1)
+
+    expls <- map(eExps, function(eExp) {
+        baseGgp +
+        (if (is.factor(pluck(regPs, as_string(eExp))))
+            geom_boxplot(aes(!!eExp, residual))
+        else
+            geom_point(aes(!!eExp, residual))
+        ) +
+        labs(x = as_string(eExp), y = "Residual") +
+        geom_hline(yintercept = 0, col = "blue", size = 1)
+    })
+
+    do.call(grid.arrange, c(list(nrow = nrow, ncol = ncol, hist, resp), expls))
+}
+# E.g.: residPlotGrid(lm(Y ~ X1 + X2 + X3, data), 3, 2, "Y", "X1", "X2", "X3")
