@@ -12,3 +12,18 @@ def unique(xs):
 
 def chunk(xs, n):
     return (xs[i:i + n] for i in range(0, len(xs), n))
+
+
+def lists_of_unhashables__eq(xs, ys):
+    cys = list(ys) # make a mutable copy
+    try:
+        for x in xs: cys.remove(x)
+    except ValueError: return False
+    return not cys
+
+def lists_of_unhashables__diff(xs, ys):
+    cxs = list(xs) # make a mutable copy
+    try:
+        for y in ys: cxs.remove(y)
+    except ValueError: pass
+    return cxs
