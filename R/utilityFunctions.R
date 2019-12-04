@@ -131,3 +131,14 @@ residPlotGrid <- function(mod, nrow, ncol, response, ...) {
     do.call(grid.arrange, c(list(nrow = nrow, ncol = ncol, hist, resp), expls))
 }
 # E.g.: residPlotGrid(lm(Y ~ X1 + X2 + X3, data), 3, 2, "Y", "X1", "X2", "X3")
+
+
+
+# Compute the overlap of two intervals
+  # IMPORTANT NOTE: This is not a vectorised function, therefore DO
+  #   EITHER: rowwise %>% mutate(... intervalOverlap(...) ...) %>% ungroup
+  #   OR: mutate(... Vectorize(intervalOverlap)(...) ...)
+  # If this is not done it will return the result of the first evaluation and that will be it for all rows
+intervalOverlap <- function(a, b) {
+  max(0, min(a[2], b[2]) - max(a[1], b[1]))
+}

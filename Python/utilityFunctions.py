@@ -27,3 +27,7 @@ def lists_of_unhashables__diff(xs, ys):
         for y in ys: cxs.remove(y)
     except ValueError: pass
     return cxs
+
+
+def interval_overlap(a, b): # Two interval tuples
+    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
