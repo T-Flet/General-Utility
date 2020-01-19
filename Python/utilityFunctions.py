@@ -1,4 +1,5 @@
 from itertools import chain
+from functools import reduce
 
 
 def flatten(list_of_lists):
@@ -12,6 +13,13 @@ def unique(xs):
 
 def chunk(xs, n):
     return (xs[i:i + n] for i in range(0, len(xs), n))
+
+
+def partition(p, xs): # Haskell's partition function: partition p xs == (filter p xs, filter (not . p) xs)
+    def select(acc, x):
+        acc[not p(x)].append(x)
+        return acc
+    return reduce(select, xs, ([],[]))
 
 
 def lists_of_unhashables__eq(xs, ys):
