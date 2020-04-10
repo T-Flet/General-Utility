@@ -15,6 +15,10 @@ def partition(p, xs): # Haskell's partition function: partition p xs == (filter 
     return reduce(select, xs, ([],[]))
 
 
+def unzip(list_of_ntuples): return [list(t) for t in zip(*list_of_ntuples)]
+def unzip_lazy(list_of_ntuples): return map(list, zip(*list_of_ntuples))
+
+
 def unique(xs):
     seen = [] # Note: 'in' tests x is z or x == z, hence it works with __eq__ overloading
     return [x for x in xs if x not in seen and not seen.append(x)] # Neat short-circuit 'and' trick
