@@ -1,59 +1,120 @@
 from itertools import chain
 from functools import reduce
 
-
-# Note: versions of functions with the '_h' suffix only work and are optimal for collections of hashable elements
-
-
-def flatten(list_of_lists): return list(chain.from_iterable(list_of_lists))
+from typing import TypeVar, Callable, Union, List, Dict, Iterable, Iterator, Generator, Any, Tuple, Generic
+_a = TypeVar('_a')
+_b = TypeVar('_b')
 
 
-def partition(p, xs): # Haskell's partition function: partition p xs == (filter p xs, filter (not . p) xs)
+
+## Higher-Order Functions
+
+def foldq(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], c: Callable[[_a], bool], xs: List[_a], acc: _b) -> Tuple[_b, List[_a]]:
+    r"""
+    Fold-like higher-order function where xs is traversed by consumption conditional on c and remaining xs are updated by g (therefore consumption order is not known a priori):
+      - the first/next item to be ingested is the first in the remaining xs to fulfil condition c
+      - at every x ingestion the item is removed from (a copy of) xs and all the remaining ones are potentially modified by function g
+      - this function always returns a tuple of (acc, remaining_xs), unlike the stricter foldq_, which raises an exception for leftover xs
+
+    Note: fold(f, xs, acc) == foldq(f, lambda acc, x, xs: xs, lambda x: True, xs, acc)
+
+    Suitable names: consumption_fold, condition_update_fold, cu_fold, q_fold, qfold or foldq
+
+    :param f: 'Traditional' fold function :: acc -> x -> acc
+    :param g: 'Update' function for all remaining xs at every iteration :: acc -> x -> xs -> xs
+    :param c: 'Condition' function to select the next x (first which satisfies it) :: x -> Bool
+    :param xs: Structure to consume
+    :param acc: Starting value for the accumulator
+    :returns: (acc, remaining_xs)
+    """
+    xs = list(xs) # Copy xs in order not to modify the actual input
+    def full_step(acc, xs): # Alternative implementation: move function content inside the while and use a 'broke' flag to trigger a continue before the raise
+        for i in range(len(xs)):
+            x = xs[i]
+            if c(x):
+                del xs[i]
+                return f(acc, x), g(acc, x, xs)
+        return None
+    while xs:
+        if (res := full_step(acc, xs)): acc, xs = res
+        else: break
+    return acc, xs
+
+def foldq_(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], c: Callable[[_a], bool], xs: List[_a], acc: _b) -> _b:
+    r"""Stricter version of foldq (see its description for details); only returns the accumulator and raises an exception on leftover xs
+
+    :raises ValueError on leftover xs"""
+    acc, xs = foldq(f, g, c, xs, acc)
+    if xs: raise ValueError('No suitable next element found for given condition while elements remain')
+    else: return acc
+
+
+def partition(p: Callable[[_a], bool], xs: Iterable[_a]) -> Tuple[Iterable[_a], Iterable[_a]]:
+    """Haskell's partition function: partition p xs == (filter p xs, filter (not . p) xs)"""
     def select(acc, x):
         acc[not p(x)].append(x)
         return acc
     return reduce(select, xs, ([],[]))
 
 
-def unzip(list_of_ntuples): return [list(t) for t in zip(*list_of_ntuples)]
-def unzip_lazy(list_of_ntuples): return map(list, zip(*list_of_ntuples))
+
+## Iterable-Focussed Functions
+# Note: versions of functions with the '_h' suffix only work and are optimal for collections of hashable elements
+
+def topological_sort(nodes_incoming_edges_tuples: Iterable[Tuple[_a, List[_b]]]) -> List[_a]:
+    """Topological sort, i.e. sort (non-uniquely) DAG nodes by directed path, e.g. sort packages by dependency order"""
+    return foldq_(lambda acc, x: acc + [x[0]],
+                  lambda acc, x, xs: [(a, [d for d in deps if d != x[0]]) for a, deps in xs],
+                  lambda x: not x[1], nodes_incoming_edges_tuples, [])
 
 
-def unique(xs):
+def flatten(list_of_lists: Iterable[List]) -> List: return list(chain.from_iterable(list_of_lists))
+
+
+def unzip(list_of_ntuples: Iterable[Iterable]) -> List[List]: return [list(t) for t in zip(*list_of_ntuples)]
+def unzip_lazy(list_of_ntuples: Iterable[Iterable]) -> Iterator[List]: return map(list, zip(*list_of_ntuples))
+
+
+def unique(xs: Iterable[_a]) -> Iterable[_a]:
     seen = [] # Note: 'in' tests x is z or x == z, hence it works with __eq__ overloading
-    return [x for x in xs if x not in seen and not seen.append(x)] # Neat short-circuit 'and' trick
-def unique_h(xs): return type(xs)(set(xs))
+    return type(xs)([x for x in xs if x not in seen and not seen.append(x)]) # Neat short-circuit 'and' trick
+def unique_h(xs: Iterable[_a]) -> Iterable[_a]: return type(xs)(set(xs))
 
 
-def eq(xs, ys):
+def eq(xs: Iterable[_a], ys: Iterable[_a]) -> bool:
     cys = list(ys) # make a mutable copy
     try:
         for x in xs: cys.remove(x)
     except ValueError: return False
     return not cys
-def eq_h(xs, ys): return xs == ys # Pointless, but here for completeness
+def eq_h(xs: Iterable[_a], ys: Iterable[_a]) -> bool: return xs == ys # Pointless, but here for completeness
 
 
-def diff(xs, ys):
+def diff(xs: Iterable[_a], ys: Iterable[_a]) -> Iterable[_a]:
     cxs = list(xs) # make a mutable copy
     try:
         for y in ys: cxs.remove(y)
     except ValueError: pass
     return cxs
-def diff_h(xs, ys): return type(xs)(set(xs) - set(ys))
+def diff_h(xs: Iterable[_a], ys: Iterable[_a]) -> Iterable[_a]: return type(xs)(set(xs) - set(ys))
 
 
-def chunk(xs, n): return (xs[i:i + n] for i in range(0, len(xs), n))
+def chunk(xs: Iterable[_a], n: int) -> Generator[_a, None, None]: return (xs[i:i + n] for i in range(0, len(xs), n))
 
 
-def interval_overlap(a, b): # Two interval tuples
-    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
 
+## Specific-Purpose Function
 
-# Update a dictionary's entries with those of another using a given function, e.g. appending (operator.add is ideal for this)
-# NOTE: This modifies d0, so might want to give it a deepcopy
-def update_dict_with(d0, d1, f):
+def update_dict_with(d0: Dict, d1: Dict, f: Callable[[_a, _b], Union[_a, _b]]) -> Dict[Any, Union[_a, _b]]:
+    """Update a dictionary's entries with those of another using a given function, e.g. appending (operator.add is ideal for this)
+
+    NOTE: This modifies d0, so might want to give it a deepcopy
+    """
     for k, v in d1.items(): d0[k] = f(d0[k], v) if k in d0 else v
     return d0
+
+
+def interval_overlap(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
 
 
