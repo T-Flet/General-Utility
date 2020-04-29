@@ -71,6 +71,9 @@ def topological_sort(nodes_incoming_edges_tuples: Iterable[Tuple[_a, List[_b]]])
 def flatten(list_of_lists: Iterable[List]) -> List: return list(chain.from_iterable(list_of_lists))
 
 
+def first(c: Callable[[_a], bool], xs: Iterable[_a], default: _a = None) -> _a: return next((x for x in xs if c(x)), default)
+
+
 def unzip(list_of_ntuples: Iterable[Iterable]) -> List[List]: return [list(t) for t in zip(*list_of_ntuples)]
 def unzip_lazy(list_of_ntuples: Iterable[Iterable]) -> Iterator[List]: return map(list, zip(*list_of_ntuples))
 
