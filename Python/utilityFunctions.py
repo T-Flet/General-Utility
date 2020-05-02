@@ -1,7 +1,8 @@
 from itertools import chain
 from functools import reduce
+import operator as op
 
-from typing import TypeVar, Callable, Union, List, Dict, Iterable, Iterator, Generator, Any, Tuple, Generic
+from typing import TypeVar, Callable, Union, List, Dict, Iterable, Iterator, Generator, Any, Tuple, Set, Generic
 _a = TypeVar('_a')
 _b = TypeVar('_b')
 
@@ -78,28 +79,34 @@ def unzip(list_of_ntuples: Iterable[Iterable]) -> List[List]: return [list(t) fo
 def unzip_lazy(list_of_ntuples: Iterable[Iterable]) -> Iterator[List]: return map(list, zip(*list_of_ntuples))
 
 
-def unique(xs: Iterable[_a]) -> Iterable[_a]:
+def unique(xs: Iterable[_a]) -> List[_a]:
     seen = [] # Note: 'in' tests x is z or x == z, hence it works with __eq__ overloading
-    return type(xs)([x for x in xs if x not in seen and not seen.append(x)]) # Neat short-circuit 'and' trick
-def unique_h(xs: Iterable[_a]) -> Iterable[_a]: return type(xs)(set(xs))
+    return [x for x in xs if x not in seen and not seen.append(x)] # Neat short-circuit 'and' trick
+def unique_h(xs: Iterable[_a]) -> Set[_a]: return set(xs)
 
 
-def eq(xs: Iterable[_a], ys: Iterable[_a]) -> bool:
+# Call functions on transformed inputs: by generic function, method or attribute (the first two with optional *args and **kwargs)
+def on(f: Callable, xs: Iterable[_a], g: Callable, *args, **kwargs): return f(*[g(x, *args, **kwargs) for x in xs]) # E.g. on(op.gt, (a, b), len)
+def on_m(f: Callable, xs: Iterable[_a], m: str, *args, **kwargs): return f(*[getattr(x, m)(*args, **kwargs) for x in xs]) # E.g. on_m(op.gt, [a, b], 'count', 'hello')
+def on_a(f: Callable, xs: Iterable[_a], a: str): return f(*[getattr(x, a) for x in xs]) # E.g. on_a(op.eq, [a, b], '__class__')
+
+
+def eq_elems(xs: Iterable[_a], ys: Iterable[_a]) -> bool:
     cys = list(ys) # make a mutable copy
     try:
         for x in xs: cys.remove(x)
     except ValueError: return False
     return not cys
-def eq_h(xs: Iterable[_a], ys: Iterable[_a]) -> bool: return xs == ys # Pointless, but here for completeness
+def eq_elems_h(xs: Iterable[_a], ys: Iterable[_a]) -> bool: return set(xs) == set(ys)
 
 
-def diff(xs: Iterable[_a], ys: Iterable[_a]) -> Iterable[_a]:
+def diff(xs: Iterable[_a], ys: Iterable[_a]) -> List[_a]:
     cxs = list(xs) # make a mutable copy
     try:
         for y in ys: cxs.remove(y)
     except ValueError: pass
     return cxs
-def diff_h(xs: Iterable[_a], ys: Iterable[_a]) -> Iterable[_a]: return type(xs)(set(xs) - set(ys))
+def diff_h(xs: Iterable[_a], ys: Iterable[_a]) -> Set[_a]: return set(xs) - set(ys)
 
 
 def chunk(xs: Iterable[_a], n: int) -> Generator[_a, None, None]: return (xs[i:i + n] for i in range(0, len(xs), n))
