@@ -2,7 +2,7 @@ from itertools import chain
 from functools import reduce
 import operator as op
 
-from typing import TypeVar, Callable, Union, List, Dict, Iterable, Iterator, Generator, Any, Tuple, Set, Generic
+from typing import TypeVar, Callable, Union, List, Dict, Iterable, Iterator, Generator, Any, Tuple, Set, Generic, Mapping
 _a = TypeVar('_a')
 _b = TypeVar('_b')
 
@@ -77,6 +77,9 @@ def first(c: Callable[[_a], bool], xs: Iterable[_a], default: _a = None) -> _a: 
 
 def unzip(list_of_ntuples: Iterable[Iterable]) -> List[List]: return [list(t) for t in zip(*list_of_ntuples)]
 def unzip_lazy(list_of_ntuples: Iterable[Iterable]) -> Iterator[List]: return map(list, zip(*list_of_ntuples))
+
+def zip_maps(*maps: List[Mapping[_a, _b]]) -> Generator[Tuple[_a, Tuple], None, None]:
+    for key in reduce(set.intersection, map(set, maps)): yield key, tuple(map(op.itemgetter(key), maps))
 
 
 def unique(xs: Iterable[_a]) -> List[_a]:
