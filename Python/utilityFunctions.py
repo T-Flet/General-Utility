@@ -16,11 +16,8 @@ def foldq(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], 
       - the first/next item to be ingested is the first in the remaining xs to fulfil condition c
       - at every x ingestion the item is removed from (a copy of) xs and all the remaining ones are potentially modified by function g
       - this function always returns a tuple of (acc, remaining_xs), unlike the stricter foldq_, which raises an exception for leftover xs
-
     Note: fold(f, xs, acc) == foldq(f, lambda acc, x, xs: xs, lambda x: True, xs, acc)
-
     Suitable names: consumption_fold, condition_update_fold, cu_fold, q_fold, qfold or foldq
-
     :param f: 'Traditional' fold function :: acc -> x -> acc
     :param g: 'Update' function for all remaining xs at every iteration :: acc -> x -> xs -> xs
     :param c: 'Condition' function to select the next x (first which satisfies it) :: x -> Bool
@@ -43,7 +40,6 @@ def foldq(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], 
 
 def foldq_(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], c: Callable[[_a], bool], xs: List[_a], acc: _b) -> _b:
     r"""Stricter version of foldq (see its description for details); only returns the accumulator and raises an exception on leftover xs
-
     :raises ValueError on leftover xs"""
     acc, xs = foldq(f, g, c, xs, acc)
     if xs: raise ValueError('No suitable next element found for given condition while elements remain')
@@ -118,9 +114,13 @@ def chunk(xs: Iterable[_a], n: int) -> Generator[_a, None, None]: return (xs[i:i
 
 ## Specific-Purpose Function
 
+# Simple Haskell convenience
+def fst(ab: Tuple[_a, _b]) -> _a: return ab[0]
+def snd(ab: Tuple[_a, _b]) -> _b: return ab[1]
+
+
 def update_dict_with(d0: Dict, d1: Dict, f: Callable[[_a, _b], Union[_a, _b]]) -> Dict[Any, Union[_a, _b]]:
     """Update a dictionary's entries with those of another using a given function, e.g. appending (operator.add is ideal for this)
-
     NOTE: This modifies d0, so might want to give it a deepcopy
     """
     for k, v in d1.items(): d0[k] = f(d0[k], v) if k in d0 else v
