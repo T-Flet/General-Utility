@@ -1,5 +1,94 @@
 #### Generic Useful Functions
 
+
+# Plot a variables' graph by their correlation (above a given threshold)
+library(corrr)
+cor_network <- function(df, threshold = 0.5, upper_threshold = 1, repel = T, curved = T) {
+  cors <- cor(df, use = 'pairwise.complete.obs')
+  cond <- (threshold < abs(cors) & abs(cors) < upper_threshold) & cors != 1
+  cors[rowSums(cond) > 0, colSums(cond) > 0, drop = F] %>% as_cordf() %>%
+    network_plot(min_cor = threshold, repel = repel, curved = curved, colours = c('tomato', 'white', 'royalblue'))
+}
+
+
+
+# Testing Homoscedasticity, Multivariate Normality, and Missing Completely at Random
+# This function does tests for specific selections of variables otherwise could do a simple TestMCARNormality(df) for all together
+# p_vals_only returns only the two tests' p-values for REJECTING MCAR (Hawkins' p-value assumes normality to reject MCAR); see TestMCARNormality documentation
+#   Typical step after computation for p_vals_only: MCAR variables are RES %>% filter(hawkins > 0.05 | non_parametric > 0.05)
+library(MissMech)
+test_normal_MCAR <- function(df, always_include, include_individually, p_vals_only = F) {
+  f <- function(col) { TestMCARNormality(df %>% select(all_of(c(always_include, col)))) }
+  if (!p_vals_only) { g <- f }
+  else { g  <- function(col) { x <- f(col); list(hawkins = x$pvalcomb, non_parametric = x$pnormality) } }
+  
+  x <- map(setNames(nm = include_individually), g)
+  
+  if (p_vals_only) { bind_cols(names(x), bind_rows(x)) %>% rename(Variable_Set = `...1`) } else { x }
+}
+
+
+
+# Run multiple and select the best of dineof data imputations (in preparation for eof of some variety)
+# Dineof imputes data by a form of iterated eof
+# Comparison with other missing-data EOFs: https://menugget.blogspot.com/2014/09/pca-eof-for-data-with-missing-values.html
+best_dineof <- function(predictor_df, times) {
+  best <- NULL
+  scores <- list()
+  for (i in 1:times) {
+    done <- dineof(predictor_df %>% as.matrix())
+    scores[[as.character(i)]] <- paste(done$n.eof, tail(done$RMS, 1))
+    if (is.null(best) || (tail(done$RMS, 1) < tail(best$RMS, 1))) { best <- done }
+  }
+  list(best = best, scores = scores)
+}
+
+# Multiple points of analysis of princiapl component (PC) or empirical orthogonal function (EOF)  analysis:
+#   - Number of required components to reach a given explained variance threshold
+#   - Bar-plot of component variances
+#   - Vertical aligned barplots of loadings of the first few components
+#   - Vertical barplots of most contributive variables in the first few components
+library(tidytext)
+eofs_analysis <- function(variances, rotation, var_names, threshold = 0.9, extra_variances_to_plot = 2, comps_to_plot = 4, top_comp_variables = 8) {
+  res <- list()
+  
+  cumulatives <- cumsum(variances / sum(variances))
+  res$required <- which(cumulatives > threshold)[1]
+  
+  cs <- fct_inorder(paste0('C', 1:nrow(rotation)))
+  threshold_cs <- c(rep.int(T, res$required), rep.int(F, ncol(rotation) - res$required))
+  
+  res$variance_plot <- tibble(Component = cs, Variance = variances, Below_Threshold = threshold_cs) %>%
+    head(res$required + extra_variances_to_plot) %>% ggplot() +
+    geom_col(aes(Component, Variance, fill = Below_Threshold), show.legend = F)
+  
+  res$loadings_plot <- rotation %>% t() %>% as_tibble() %>% setNames(var_names) %>%
+    mutate(Component = cs, .before = 1) %>%
+    pivot_longer(-Component) %>%
+    filter(Component %in% cs[1:comps_to_plot]) %>%
+    ggplot(aes(value, name, fill = name)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~Component, nrow = 1) +
+    labs(y = NULL)
+  
+  res$highest_loadings_plot <- rotation %>% t() %>% as_tibble() %>% setNames(var_names) %>%
+    mutate(Component = cs, .before = 1) %>%
+    pivot_longer(-Component) %>%
+    mutate(Sign = factor(sign(value))) %>%
+    filter(Component %in% cs[1:comps_to_plot]) %>%
+    group_by(Component) %>%
+    top_n(top_comp_variables, abs(value)) %>%
+    ungroup() %>%
+    mutate(name = reorder_within(name, abs(value), Component)) %>%
+    ggplot() + geom_col(aes(abs(value), name, fill = Sign), show.legend = F) +
+    facet_wrap(~Component, scales = 'free_y') +
+    scale_y_reordered() + scale_fill_manual(values = c('tomato', 'royalblue'))
+  
+  res
+}
+
+
+
 # Make a Cross-Validation table and produce a summary of it
 xTWithSumm <- function(real, predicted) {
     xtab <- table(real, predicted)
@@ -71,13 +160,11 @@ tuningHelper <- function(n = 100, target, methodF, params) {
 
 
 ## Functions to go between Factor and Int
-numToInt <- function(x) {
-    as.integer(unlist(round(x)))
-}
+numToInt <- function(x) { as.integer(unlist(round(x))) }
 
-numToFac <- function(x, levels) {
-    factor(levels[numToInt(x)], levels)
-}
+numToFac <- function(x, levels) { factor(levels[numToInt(x)], levels) }
+
+facToInt <- function(x) { as.numeric(levels(x))[x] }
 
 # Simple check:
 #all(data == toClassFac(toClassInt(data)))

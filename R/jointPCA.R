@@ -12,7 +12,7 @@ cumVar_index <- function(full_PCA, varProp) {
 # cumulative variance proportions specified in varProps.
 # The options are whether to standardise the data before PCA, whether to plot the components and print the summary
 # and whether to include the PCA result object in the output
-jointPCA <- function(train, test, varProps = c(0.9), standardise = T, verbose = T, full_PCA_data = F) {
+jointPCA <- function(train, test, varProps = c(0.9), center = T, scale = T, verbose = T, return_full_PCA_data = F) {
     varProps <- sort(varProps)
     names(varProps) <- varProps
 
@@ -20,17 +20,12 @@ jointPCA <- function(train, test, varProps = c(0.9), standardise = T, verbose = 
     #all.equal(both[1:nrow(train),], train)
     #all.equal(both[(nrow(train) + 1):nrow(both),], test)
 
-    both_PCA <- list()
-    if (standardise) { # Note: center = T by default anyway
-        both_PCA <- prcomp(both, center = T, scale. = T)
-    } else {
-        both_PCA <- prcomp(both, center = T)
-    }
+    both_PCA <- prcomp(both, center = center, scale. = scale)
 
     if (verbose) { print(summary(both_PCA)); plot(both_PCA) }
 
     res <- list(varSets = list())
-    if (full_PCA_data) { res$full_PCA <- both_PCA }
+    if (return_full_PCA_data) { res$full_PCA <- both_PCA }
 
     train_PCAd <- both_PCA$x[1:nrow(train),]
     test_PCAd <- both_PCA$x[(nrow(train) + 1):nrow(both),]
