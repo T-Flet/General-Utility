@@ -17,40 +17,57 @@ getModTerms <- function(glmMod, threshold) {
 
 
 # GLM selction by removal of least siginificant term steps
-stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, nested = F, family_is_normal = F) {
+# significance_statistic needs to match the last column of a glm summary; it is usually z, but for, say, the gaussian family it is t
+# See anova.glm documentation for most appropriate statistical test (again, usually Chisq, but F for gaussian)
+stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, significance_statistic = 'z', test = 'Chisq', test_threshold = threshold, nested = F) {
   discarded <- c()
+  failed_discards <- c()
   mod <- glmMod
   maxIter <- summary(mod)$coefficients %>% length - 1
   
-  p_val_col <- if (family_is_normal) {'Pr(>|t|)'} else {'Pr(>|z|)'}
+  p_val_col <-  paste0('Pr(>|', significance_statistic, '|)')
   
   for (i in 1:maxIter) {
     coeffs <- summary(mod)$coefficients
     terms <- as_tibble(coeffs) %>%
       add_column(varName = coeffs %>% rownames, .before = 1) %>%
-      filter(varName != "(Intercept)") %>%
+      filter(varName != '(Intercept)') %>%
       arrange(desc(!!ensym(p_val_col)))
     
-    if (terms[1,][[p_val_col]] < threshold) { break } else {
-      discarded <- append(discarded, terms[1,]$varName)
-      mod <- update(mod, formula. = as.formula(paste("~ . -", terms[1,]$varName)), data = data)
-    }
+    if (terms[1,][[p_val_col]] < threshold) { break }
+    else { for (r in 1:nrow(terms)) {
+      if (r > 1) { failed_discards <- append(failed_discards, terms[r-1,]$varName) }
+      if (terms[r,][[p_val_col]] < threshold) { break }
+      new_mod <- update(mod, formula. = as.formula(paste('~ . -', terms[r,]$varName)), data = data)
+      test_res <- anova(new_mod, mod, test = test)
+      if (test_res[[paste0('Pr(>', test, ')')]][2] > test_threshold) {
+        mod <- new_mod
+        discarded <- append(discarded, terms[r,]$varName)
+        break
+      }
+    }}
   }
   
   if (!nested) { # Deal with Intercept
     coeffs <- summary(mod)$coefficients
     terms <- as_tibble(coeffs) %>%
       add_column(varName = coeffs %>% rownames, .before = 1) %>%
-      filter(varName == "(Intercept)")
+      filter(varName == '(Intercept)')
     
     if (nrow(terms) != 0 & terms[1,][[p_val_col]] > threshold) {
-      discarded <- append(discarded, "(Intercept)")
-      mod <- update(mod, formula. = ~ . + 0)
+      new_mod <- update(mod, formula. = ~ . + 0)
+      test_res <- anova(new_mod, mod, test = test)
+      if (test_res[[paste0('Pr(>', test, ')')]][2] < test_threshold) {
+        mod <- new_mod
+        discarded <- append(discarded, '(Intercept)')
+      }
     }
-    redo <- stepLeastSigGLM(mod, threshold = 0.1, data = data, nested = T, family_is_normal = family_is_normal)
-    mod <- redo$mod
+    redo <- stepLeastSigGLM(mod, threshold = threshold, data = data, significance_statistic = significance_statistic, test = test, test_threshold = test_threshold, nested = T)
     discarded <- c(discarded, redo$discarded)
+    mod <- redo$mod
   }
+  
+  if (!nested & (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
   
   list(mod = mod, discarded = discarded)
 }
@@ -143,31 +160,36 @@ stepLeastSigGAM2 <- function(gamMod, threshold = 0.2, modUpdater = NA, nested = 
 #### Forward steps ####
 
 # GLM selction by stepwise variable insertion followed by possible removal of least siginificant term if below threshold
-stepLeastSigGLM_forward <- function(glmMod, variables, threshold = 0.2, data = glmMod$data, nested = F, family_is_normal = F) {
+# significance_statistic needs to match the last column of a glm summary; it is usually z, but for, say, the gaussian family it is t
+# See anova.glm documentation for most appropriate statistical test (again, usually Chisq, but F for gaussian)
+#   NOTE: check that the formula in the starting model does not contain any of the variables to add
+stepLeastSigGLM_forward <- function(glmMod, variables, threshold = 0.2, data = glmMod$data, test_forward = T, significance_statistic = 'z', test = 'Chisq', test_threshold = threshold, nested = F) {
   discarded <- c()
-  old_mod <- glmMod
+  failed_discards <- c()
   mod <- glmMod
   
-  p_val_col <- if (family_is_normal) {'Pr(>|t|)'} else {'Pr(>|z|)'}
+  p_val_col <-  paste0('Pr(>|', significance_statistic, '|)')
   
   for (v in variables) {
-    old_mod <- mod
-    mod <- update(old_mod, formula. = as.formula(paste('~ . +', v)), data = data)
-    coeffs <- summary(mod)$coefficients
+    new_mod <- update(mod, formula. = as.formula(paste('~ . +', v)), data = data)
+    coeffs <- summary(new_mod)$coefficients
     terms <- as_tibble(coeffs) %>%
       add_column(varName = coeffs %>% rownames, .before = 1) %>%
       filter(varName != '(Intercept)') %>%
       arrange(desc(!!ensym(p_val_col)))
     
-    if (terms[1,][[p_val_col]] > threshold) {
-      if (terms[1,]$varName == v) {
-        discarded <- append(discarded, terms[1,]$varName)
-        mod <- old_mod
-      } else { # Perform iterated BACKWARD steps if the first one is not the last added variable
-        redo <- stepLeastSigGLM(mod, threshold = threshold, data = data, nested = T, family_is_normal = family_is_normal)
-        discarded <- c(discarded, redo$discarded)
-        mod <- redo$mod
-      }
+    if (terms[1,][[p_val_col]] < threshold) {
+      if (test_forward) {
+        test_res <- anova(mod, new_mod, test = test)
+        if (test_res[[paste0('Pr(>', test, ')')]][2] < test_threshold) { mod <- new_mod }
+        else { discarded <- append(discarded, terms[1,]$varName) }
+      } else { mod <- new_mod }
+    } else if (terms[1,]$varName == v) {
+      discarded <- append(discarded, terms[1,]$varName)
+    } else { # Perform iterated BACKWARD steps if the first one is not the last added variable
+      redo <- stepLeastSigGLM(new_mod, threshold = threshold, data = data, significance_statistic = significance_statistic, test = test, test_threshold = test_threshold, nested = T)
+      discarded <- c(discarded, redo$discarded)
+      mod <- redo$mod
     }
   }
   
@@ -178,10 +200,14 @@ stepLeastSigGLM_forward <- function(glmMod, variables, threshold = 0.2, data = g
       filter(varName == '(Intercept)')
     
     if (nrow(terms) != 0 & terms[1,][[p_val_col]] > threshold) {
-      discarded <- append(discarded, '(Intercept)')
-      mod <- update(mod, formula. = ~ . + 0)
+      new_mod <- update(mod, formula. = ~ . + 0)
+      test_res <- anova(new_mod, mod, test = test)
+      if (test_res[[paste0('Pr(>', test, ')')]][2] < test_threshold) {
+        mod <- new_mod
+        discarded <- append(discarded, '(Intercept)')
+      }
     }
-    redo <- stepLeastSigGLM(mod, threshold = 0.1, data = data, nested = T, family_is_normal = family_is_normal)
+    redo <- stepLeastSigGLM(mod, threshold = threshold, data = data, significance_statistic = significance_statistic, test = test, test_threshold = test_threshold, nested = T)
     discarded <- c(discarded, redo$discarded)
     mod <- redo$mod
   }
@@ -191,13 +217,13 @@ stepLeastSigGLM_forward <- function(glmMod, variables, threshold = 0.2, data = g
 
 
 # Run multiple and select the lowest AIC run of stepLeastSigGLM_forward
-best_steps <- function(glmMod, variables, seeds = c(1,2,7,17,42,73,100,117,1000,1000000), score_f = AIC, threshold = 0.2, data = glmMod$data, nested = F, family_is_normal = F) {
+best_steps <- function(glmMod, variables, seeds = c(1,2,7,17,42,73,100,117,1000,1000000), score_f = AIC, threshold = 0.2, data = glmMod$data, test_forward = T, significance_statistic = 'z', test = 'Chisq', test_threshold = threshold, nested = F) {
   best <- NULL
   scores <- list()
   for (seed in seeds) {
     set.seed(seed)
     vs_to_use <- sample(variables)
-    done <- stepLeastSigGLM_forward(glmMod, vs_to_use, threshold, data, nested, family_is_normal)
+    done <- stepLeastSigGLM_forward(glmMod, variables, threshold = threshold, data = data, test_forward = test_forward, significance_statistic = significance_statistic, test = test, test_threshold = test_threshold)
     scores[[as.character(seed)]] <- score_f(done$mod)
     if (is.null(best) || (score_f(done$mod) < score_f(best$mod))) { best <- done }
   }
