@@ -1,6 +1,11 @@
 #### Generic Useful Functions
 
 
+library(purrr)
+# NOTE: Need to add the appropriate empty set manually, e.g. c(c(''), powerset(xs))
+powerset <- function(xs) { map(1:(length(xs)), ~ combn(xs, ., simplify = F)) %>% unlist(recursive = F) }
+
+
 # Plot a variables' graph by their correlation (above a given threshold)
 library(corrr)
 cor_network <- function(df, threshold = 0.5, upper_threshold = 1, repel = T, curved = T) {
@@ -43,13 +48,13 @@ best_dineof <- function(predictor_df, times) {
   list(best = best, scores = scores)
 }
 
-# Multiple points of analysis of princiapl component (PC) or empirical orthogonal function (EOF)  analysis:
+# Multiple points of analysis of princiapl component (PC) or empirical orthogonal function (EOF) analysis:
 #   - Number of required components to reach a given explained variance threshold
 #   - Bar-plot of component variances
 #   - Vertical aligned barplots of loadings of the first few components
 #   - Vertical barplots of most contributive variables in the first few components
 library(tidytext)
-eofs_analysis <- function(variances, rotation, var_names, threshold = 0.9, extra_variances_to_plot = 2, comps_to_plot = 4, top_comp_variables = 8) {
+eof_analysis <- function(variances, rotation, var_names, threshold = 0.9, extra_variances_to_plot = 2, comps_to_plot = 4, top_comp_variables = 8) {
   res <- list()
   
   cumulatives <- cumsum(variances / sum(variances))
@@ -62,20 +67,58 @@ eofs_analysis <- function(variances, rotation, var_names, threshold = 0.9, extra
     head(res$required + extra_variances_to_plot) %>% ggplot() +
     geom_col(aes(Component, Variance, fill = Below_Threshold), show.legend = F)
   
-  res$loadings_plot <- rotation %>% t() %>% as_tibble() %>% setNames(var_names) %>%
+  lps <- eof_loadings_plots(rotation, var_names, cs, comps_to_plot = comps_to_plot, top_comp_variables = top_comp_variables)
+  res$loadings_plot <- lps$loadings_plot
+  res$highest_loadings_plot <- lps$highest_loadings_plot
+
+  res
+}
+
+# Further points of analysis of princiapl component (PC) or empirical orthogonal function (EOF) analysis:
+#   - Perform a glm and a refined glm (by step_back from iterated_models.R, which NEEDS to be imported)
+#   - Produce the same loadings plots as eof_analysis for the refined model's highest p-value eofs
+eof_glm_analysis <- function(resp_name, resp_v, rotated_data, required, rotation, var_names, comps_to_plot = 4, top_comp_variables = 8) {
+  res <- list()
+
+  df <- as_tibble(rotated_data[,1:required]) %>%
+    setNames(paste0('C', 1:required)) %>%
+    mutate(!!ensym(resp_name) := resp_v, .before = 1)
+  
+  res$simple_glm <- glm(as.formula(paste(resp_name, '~ .')), df, family = gaussian())
+  res$step_back_glm <- stepLeastSigGLM(res$simple_glm, threshold = 0.1, significance_statistic = 't', test = 'F')$mod
+  
+  coeffs <- summary(res$step_back_glm)$coefficients
+  res$ord_cs <- as_tibble(coeffs) %>%
+    add_column(varName = coeffs %>% rownames, .before = 1) %>%
+    filter(varName != '(Intercept)') %>%
+    arrange(desc('Pr(>|t|)')) %>%
+    pluck('varName')
+  
+  lps <- eof_loadings_plots(rotation, var_names, cs_subset = res$ord_cs, comps_to_plot = comps_to_plot, top_comp_variables = top_comp_variables)
+  res$loadings_plot <- lps$loadings_plot
+  res$highest_loadings_plot <- lps$highest_loadings_plot
+  
+  res
+}
+
+# EOF loadings plots as used and described in eof_analysis and eof_glm_analysis
+eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C', 1:nrow(rotation))), cs_subset = cs, comps_to_plot = 4, top_comp_variables = 8) {
+  res <- list()
+  
+  df <- rotation %>% t() %>% as_tibble() %>% setNames(var_names) %>%
     mutate(Component = cs, .before = 1) %>%
-    pivot_longer(-Component) %>%
-    filter(Component %in% cs[1:comps_to_plot]) %>%
+    pivot_longer(-Component)
+  
+  res$loadings_plot <- df %>%
+    filter(Component %in% cs_subset[1:comps_to_plot]) %>%
     ggplot(aes(value, name, fill = name)) +
     geom_col(show.legend = FALSE) +
     facet_wrap(~Component, nrow = 1) +
     labs(y = NULL)
   
-  res$highest_loadings_plot <- rotation %>% t() %>% as_tibble() %>% setNames(var_names) %>%
-    mutate(Component = cs, .before = 1) %>%
-    pivot_longer(-Component) %>%
+  res$highest_loadings_plot <- df %>%
     mutate(Sign = factor(sign(value))) %>%
-    filter(Component %in% cs[1:comps_to_plot]) %>%
+    filter(Component %in% cs_subset[1:comps_to_plot]) %>%
     group_by(Component) %>%
     top_n(top_comp_variables, abs(value)) %>%
     ungroup() %>%
@@ -164,7 +207,8 @@ numToInt <- function(x) { as.integer(unlist(round(x))) }
 
 numToFac <- function(x, levels) { factor(levels[numToInt(x)], levels) }
 
-facToInt <- function(x) { as.numeric(levels(x))[x] }
+# as.numeric is guaranteed to return the level number even if the level is an integer itself
+facToInt <- function(x) { as.numeric(x) } # Old: setNames(c(1:length(levels(x))), nm = levels(x))[x] # Older: as.numeric(levels(x))[x]
 
 # Simple check:
 #all(data == toClassFac(toClassInt(data)))

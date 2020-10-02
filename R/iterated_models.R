@@ -72,6 +72,7 @@ stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, signifi
   list(mod = mod, discarded = discarded)
 }
 
+
 # GAM selction by removal of least siginificant term steps
 stepLeastSigGAM <- function(gamMod, threshold = 0.2, data = gamMod$data, nested = F) {
   discarded <- c()
