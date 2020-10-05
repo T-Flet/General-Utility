@@ -111,10 +111,10 @@ eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C',
   
   res$loadings_plot <- df %>%
     filter(Component %in% cs_subset[1:comps_to_plot]) %>%
-    ggplot(aes(value, name, fill = name)) +
-    geom_col(show.legend = FALSE) +
-    facet_wrap(~Component, nrow = 1) +
-    labs(y = NULL)
+    mutate(name = factor(name, levels = sort(unique(name), T))) %>%
+    ggplot() + geom_col(aes(value, name, fill = name), show.legend = F) +
+      facet_wrap(~ Component, nrow = 1) +
+      labs(y = NULL)
   
   res$highest_loadings_plot <- df %>%
     mutate(Sign = factor(sign(value))) %>%
@@ -124,8 +124,9 @@ eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C',
     ungroup() %>%
     mutate(name = reorder_within(name, abs(value), Component)) %>%
     ggplot() + geom_col(aes(abs(value), name, fill = Sign), show.legend = F) +
-    facet_wrap(~Component, scales = 'free_y') +
-    scale_y_reordered() + scale_fill_manual(values = c('tomato', 'royalblue'))
+      facet_wrap(~ Component, scales = 'free_y') +
+      scale_y_reordered() + scale_fill_manual(values = c('tomato', 'royalblue')) +
+      labs(y = NULL)
   
   res
 }
