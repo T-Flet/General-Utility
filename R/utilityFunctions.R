@@ -11,10 +11,18 @@ library(corrr)
 cor_network <- function(df, threshold = 0.5, upper_threshold = 1, repel = T, curved = T) {
   cors <- cor(df, use = 'pairwise.complete.obs')
   cond <- (threshold < abs(cors) & abs(cors) < upper_threshold) & cors != 1
-  cors[rowSums(cond) > 0, colSums(cond) > 0, drop = F] %>% as_cordf() %>%
-    network_plot(min_cor = threshold, repel = repel, curved = curved, colours = c('tomato', 'white', 'royalblue'))
+  cor_mat <- cors[rowSums(cond) > 0, colSums(cond) > 0, drop = F]
+  print(paste(nrow(cor_mat), 'variables with correlations between', threshold, 'and', upper_threshold))
+  network_plot(as_cordf(cor_mat), min_cor = threshold, repel = repel, curved = curved, colours = c('tomato', 'white', 'royalblue'))
 }
-
+cor_hist <- function(df) {
+  cors <- cor(df, use = 'pairwise.complete.obs')
+  diag(cors) <- NA
+  tibble(Correlation = as.vector(cors)) %>% ggplot() +
+    geom_histogram(aes(Correlation), bins = 50) +
+    ylab('Count')
+}
+# cor_hist(covid$base %>% select(where(is.numeric)))
 
 
 # Testing Homoscedasticity, Multivariate Normality, and Missing Completely at Random
@@ -77,7 +85,7 @@ eof_analysis <- function(variances, rotation, var_names, threshold = 0.9, extra_
 # Further points of analysis of princiapl component (PC) or empirical orthogonal function (EOF) analysis:
 #   - Perform a glm and a refined glm (by step_back from iterated_models.R, which NEEDS to be imported)
 #   - Produce the same loadings plots as eof_analysis for the refined model's highest p-value eofs
-eof_glm_analysis <- function(resp_name, resp_v, rotated_data, required, rotation, var_names, comps_to_plot = 4, top_comp_variables = 8) {
+eof_glm_analysis <- function(resp_name, resp_v, rotated_data, required, variances, rotation, var_names, comps_to_plot = 4, top_comp_variables = 8, threshold = 0.1) {
   res <- list()
 
   df <- as_tibble(rotated_data[,1:required]) %>%
@@ -85,16 +93,17 @@ eof_glm_analysis <- function(resp_name, resp_v, rotated_data, required, rotation
     mutate(!!ensym(resp_name) := resp_v, .before = 1)
   
   res$simple_glm <- glm(as.formula(paste(resp_name, '~ .')), df, family = gaussian())
-  res$step_back_glm <- stepLeastSigGLM(res$simple_glm, threshold = 0.1, significance_statistic = 't', test = 'F')$mod
+  res$step_back_glm <- stepLeastSigGLM(res$simple_glm, threshold = threshold, significance_statistic = 't', test = 'F')$mod
   
+  rel_vars <- tibble(varName = paste0('C', 1:nrow(rotation)), Rel_Var = variances / sum(variances))
   coeffs <- summary(res$step_back_glm)$coefficients
   res$ord_cs <- as_tibble(coeffs) %>%
     add_column(varName = coeffs %>% rownames, .before = 1) %>%
     filter(varName != '(Intercept)') %>%
-    arrange(desc('Pr(>|t|)')) %>%
-    pluck('varName')
-  
-  lps <- eof_loadings_plots(rotation, var_names, cs_subset = res$ord_cs, comps_to_plot = comps_to_plot, top_comp_variables = top_comp_variables)
+    arrange(`Pr(>|t|)`) %>%
+    left_join(rel_vars, by = 'varName')
+
+  lps <- eof_loadings_plots(rotation, var_names, cs_subset = res$ord_cs$varName, comps_to_plot = comps_to_plot, top_comp_variables = top_comp_variables)
   res$loadings_plot <- lps$loadings_plot
   res$highest_loadings_plot <- lps$highest_loadings_plot
   
@@ -114,7 +123,7 @@ eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C',
     mutate(name = factor(name, levels = sort(unique(name), T))) %>%
     ggplot() + geom_col(aes(value, name, fill = name), show.legend = F) +
       facet_wrap(~ Component, nrow = 1) +
-      labs(y = NULL)
+      labs(x = NULL, y = NULL)
   
   res$highest_loadings_plot <- df %>%
     mutate(Sign = factor(sign(value))) %>%
@@ -126,7 +135,7 @@ eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C',
     ggplot() + geom_col(aes(abs(value), name, fill = Sign), show.legend = F) +
       facet_wrap(~ Component, scales = 'free_y') +
       scale_y_reordered() + scale_fill_manual(values = c('tomato', 'royalblue')) +
-      labs(y = NULL)
+      labs(x = NULL, y = NULL)
   
   res
 }
