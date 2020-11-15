@@ -34,10 +34,9 @@ stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, signifi
       filter(varName != '(Intercept)') %>%
       arrange(desc(!!ensym(p_val_col)))
     
-    if (terms[1,][[p_val_col]] < threshold) { break }
-    else { for (r in 1:nrow(terms)) {
-      if (r > 1) { failed_discards <- append(failed_discards, terms[r-1,]$varName) }
+    for (r in 1:nrow(terms)) {
       if (terms[r,][[p_val_col]] < threshold) { break }
+      if (r > 1) { failed_discards <- append(failed_discards, terms[r-1,]$varName) }
       new_mod <- update(mod, formula. = as.formula(paste('~ . -', terms[r,]$varName)), data = data)
       test_res <- anova(new_mod, mod, test = test)
       if (test_res[[paste0('Pr(>', test, ')')]][2] > test_threshold) {
@@ -45,7 +44,7 @@ stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, signifi
         discarded <- append(discarded, terms[r,]$varName)
         break
       }
-    }}
+    }
   }
   
   if (!nested) { # Deal with Intercept
@@ -65,6 +64,41 @@ stepLeastSigGLM <- function(glmMod, threshold = 0.2, data = glmMod$data, signifi
     redo <- stepLeastSigGLM(mod, threshold = threshold, data = data, significance_statistic = significance_statistic, test = test, test_threshold = test_threshold, nested = T)
     discarded <- c(discarded, redo$discarded)
     mod <- redo$mod
+  }
+  
+  if (!nested & (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
+  
+  list(mod = mod, discarded = discarded)
+}
+
+
+# Same as above but for Proportional Odds Logistic Regression
+#  NOTE: might want to give the input polr model a start argument; see start_vals function inside below
+stepLeastSigPOLR <- function(polrMod, data, threshold = 0.2, test_threshold = threshold, nested = F) {
+  discarded <- c()
+  failed_discards <- c()
+  mod <- polrMod
+  maxIter <- tidy(mod) %>% filter(coef.type == 'coefficient') %>% nrow() - 1
+  n_levels <- length(mod$lev)
+  start_vals <- function(n_predictors) { c(rep.int(0, n_predictors), 0:(n_levels-2) - (n_levels-2)/2) }
+  
+  for (i in 1:maxIter) {
+    terms <- tidy(mod) %>% filter(coef.type == 'coefficient') %>%
+      rename(varName = term) %>%
+      mutate(p_val = pt(-abs(statistic), nrow(mod$fitted.values) - (n() + (n_levels - 1)) - 1)) %>%
+      arrange(desc(p_val)) # Above: degrees of freedom are #observations - #coefficients - 1, and #coefficients is #covariates + #intercepts, where #intercepts is the number of response levels - 1
+    
+    for (r in 1:nrow(terms)) {
+      if (terms[r,]$p_val < threshold) { break }
+      if (r > 1) { failed_discards <- append(failed_discards, terms[r-1,]$varName) }
+      new_mod <- update(mod, formula. = as.formula(paste('~ . -', terms[r,]$varName)), data = data, start = start_vals(nrow(terms) - 1))
+      test_res <- anova(new_mod, mod, test = 'Chisq')
+      if (test_res$`Pr(Chi)`[2] > test_threshold) {
+        mod <- new_mod
+        discarded <- append(discarded, terms[r,]$varName)
+        break
+      }
+    }
   }
   
   if (!nested & (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
