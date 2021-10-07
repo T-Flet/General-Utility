@@ -6,7 +6,7 @@ getModTerms <- function(glmMod, threshold) {
   coeffs <- summary(glmMod)$coefficients
   as_tibble(coeffs) %>%
     add_column(varName = coeffs %>% rownames, .before = 1) %>%
-    filter(varName != "(Intercept)") %>%
+    filter(varName != '(Intercept)') %>%
     filter(`Pr(>|z|)` < threshold) %>%
     pull(varName)
 }
@@ -14,6 +14,8 @@ getModTerms <- function(glmMod, threshold) {
 
 
 #### Backward steps ####
+
+### NOTE: FACTORS ARE NOT SUPPORTED (YET)###########################################
 
 
 # GLM selction by removal of least siginificant term steps

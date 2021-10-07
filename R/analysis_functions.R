@@ -1,12 +1,9 @@
-#### Generic Useful Functions
 
-
-library(purrr)
-# NOTE: Need to add the appropriate empty set manually, e.g. c(c(''), powerset(xs))
-powerset <- function(xs) { map(1:(length(xs)), ~ combn(xs, ., simplify = F)) %>% unlist(recursive = F) }
-
+### Correlation ###
 
 # Plot a variables' graph by their correlation (above a given threshold)
+# Variables are positioned by multidimensional scaling on correlation magnitude,
+# therefore placement and clustering reflect overall correlation profile similarity
 library(corrr)
 cor_network <- function(df, threshold = 0.5, upper_threshold = 1, repel = T, curved = T) {
   cors <- cor(df, use = 'pairwise.complete.obs')
@@ -25,6 +22,9 @@ cor_hist <- function(df) {
 # cor_hist(covid$base %>% select(where(is.numeric)))
 
 
+
+### Heteroskedasticity ###
+
 # Testing Homoscedasticity, Multivariate Normality, and Missing Completely at Random
 # This function does tests for specific selections of variables otherwise could do a simple TestMCARNormality(df) for all together
 # p_vals_only returns only the two tests' p-values for REJECTING MCAR (Hawkins' p-value assumes normality to reject MCAR); see TestMCARNormality documentation
@@ -41,6 +41,8 @@ test_normal_MCAR <- function(df, always_include, include_individually, p_vals_on
 }
 
 
+
+### Empirical Orthogonal Functions (EOF) ###
 
 # Run multiple and select the best of dineof data imputations (in preparation for eof of some variety)
 # Dineof imputes data by a form of iterated eof
@@ -142,6 +144,8 @@ eof_loadings_plots <- function(rotation, var_names, cs = fct_inorder(paste0('C',
 
 
 
+### Cross-Validation ###
+
 # Make a Cross-Validation table and produce a summary of it
 xTWithSumm <- function(real, predicted) {
     xtab <- table(real, predicted)
@@ -189,55 +193,7 @@ xTSummary <- function(xtab, labels = NULL) {
 
 
 
-library(tidyverse)
-## Runner function for multiple tuning parameter values
-# Inputs:
-#   n - number of tests to perform for each tuning parameters' combination
-#   target - result to score against when comparing results
-#   methodF - function wrapper around the method to test, with only the parameters to tune as arguments
-#   params - (possibly named) list of tuning parameter values to test (all combinations will be produced)
-# Output: a tibble of tuning parameters and result values, in ascending order of mean deviation from target
-# NOTE: the functions in stochGradDesc.R are typical arguments to this function
-tuningHelper <- function(n = 100, target, methodF, params) {
-    pCombs <- do.call(crossing, params) %>% simplify2array
-    map(1:nrow(pCombs), function(i) {
-        map(1:n, function(unused) {
-            out <- methodF(pCombs[i,])
-            out$theta[nrow(out$theta),] - target
-        }) %>% simplify2array %>% rowMeans %>% c(pCombs[i,], .)
-    }) %>% simplify2array %>% t %>% as.tibble %>%
-        mutate(mean = .[, 2:ncol(.)] %>% abs %>% rowMeans) %>%
-        arrange(mean)
-}
-
-
-
-## Functions to go between Factor and Int
-numToInt <- function(x) { as.integer(unlist(round(x))) }
-
-numToFac <- function(x, levels) { factor(levels[numToInt(x)], levels) }
-
-# as.numeric is guaranteed to return the level number even if the level is an integer itself
-facToInt <- function(x) { as.numeric(x) } # Old: setNames(c(1:length(levels(x))), nm = levels(x))[x] # Older: as.numeric(levels(x))[x]
-
-# Simple check:
-#all(data == toClassFac(toClassInt(data)))
-
-
-
-# Partition a data frame into either a given number of random subsets
-# or into random subsets of given proportional sizes and names
-# Set the argument 'parts' to an integer for the former and to a named list of proportions adding up to 1 for the latter
-splitBy <- function(df, parts) {
-    labels <- if (length(parts) == 1) {
-        cut(seq(nrow(df)), parts, labels = 1:parts)
-    } else {
-        cut(seq(nrow(df)), nrow(df) * cumsum(c(0, parts)), labels = names(parts))
-    }
-    split(df, sample(labels))
-}
-
-
+### Residuals ###
 
 # Plot the useful residual plots for a model on a pre-determined grid
 # (Histogram, vs reponse and vs any explanatory of interest, provided in the ...)
@@ -274,12 +230,3 @@ residPlotGrid <- function(mod, nrow, ncol, response, ...) {
 # E.g.: residPlotGrid(lm(Y ~ X1 + X2 + X3, data), 3, 2, "Y", "X1", "X2", "X3")
 
 
-
-# Compute the overlap of two intervals
-  # IMPORTANT NOTE: This is not a vectorised function, therefore DO
-  #   EITHER: rowwise %>% mutate(... intervalOverlap(...) ...) %>% ungroup
-  #   OR: mutate(... Vectorize(intervalOverlap)(...) ...)
-  # If this is not done it will return the result of the first evaluation and that will be it for all rows
-intervalOverlap <- function(a, b) {
-  max(0, min(a[2], b[2]) - max(a[1], b[1]))
-}
