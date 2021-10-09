@@ -45,9 +45,12 @@ removable_terms <- function(term_deps, removed) {
 #         might want to %>% unique_by_elem('sorted'), which also names the list by the field
 #     - The usefulness of the 'sorted' field lies in lining up with gen_dependent_terms outputs
 get_terms_details <- function(mod) {
-  factors <- keep(colnames(mod$data), ~ is.factor(mod$data[[.x]])) # These may however not be in the formula
+  method <- paste(deparse(mod$call), collapse = '') %>% str_extract('^([^\\(]+)')
+  data <- mod[[ifelse(method %in% c('polr', 'multinom'), 'model', 'data')]]
+  factors <- keep(colnames(data), ~ is.factor(data[[.x]])) # These may however not be in the formula
   
-  tidy(mod)$term %>% discard(~ .x == '(Intercept)') %>% map(~
+  (tidy(mod) %>% (function(terms) if (method == 'polr') terms %>% filter(coef.type == 'coefficient') else terms))$term %>%
+    discard(~ .x == '(Intercept)') %>% map(~
       list(original = .x, details = map(str_split(.x, ':') %>% unlist(), function(part) {
           inner <- str_match(part, '^I\\((.+)\\^([0-9]+)\\)$') # Full match is [1], base term is [2] and power is [3]
           base_factor <- detect(map(factors, ~ list(f = .x, match = str_starts(part, fixed(.x)))), ~ .x$match)$f
@@ -80,7 +83,8 @@ gen_dependent_terms_from_model <- function(mod, term_details = NULL) {
   present_terms <- map(term_details, ~ .x$identified) # Names are sorted, values are identified
   base_terms <- map(term_details, ~ .x$bases) %>% unlist(recursive = F) %>% unique()
   interaction_terms <- keep(term_details, ~ str_detect(.x$original, ':')) %>% map(~ .x$sorted)
-  factors <- intersect(base_terms, keep(colnames(mod$data), ~ is.factor(mod$data[[.x]]))) # I.e. the factors which are present
+  data <- ifelse(paste(deparse(mod$call), collapse = '') %>% str_extract('^([^\\(]+)') %in% c('polr', 'multinom'), mod[['model']], mod[['data']])
+  factors <- intersect(base_terms, keep(colnames(data), ~ is.factor(data[[.x]]))) # I.e. the factors which are present
   
   max_power <- max(map(term_details, ~ .x$degree) %>% unlist())
   interactions <- length(interaction_terms) > 0
