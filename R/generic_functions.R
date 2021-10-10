@@ -1,6 +1,7 @@
 library(tidyverse)
 
 
+
 ### Conversion ###
 
 
@@ -21,6 +22,10 @@ numToFac <- function(x, levels) { factor(levels[numToInt(x)], levels) }
 facToInt <- function(x) { as.numeric(x) } # Old: setNames(c(1:length(levels(x))), nm = levels(x))[x] # Older: as.numeric(levels(x))[x]
 # Simple check:
 #all(data == toClassFac(toClassInt(data)))
+
+
+# Convert all string columns to factors
+df_strs_to_factors <- function(df) df %>% mutate(across(where(is_character), factor))
 
 
 
@@ -80,17 +85,9 @@ upper_zip_last <- function(...) {
 # or into random subsets of given proportional sizes and names
 # Set the argument 'parts' to an integer for the former and to a named list of proportions adding up to 1 for the latter
 splitBy <- function(df, parts) {
-    labels <- if (length(parts) == 1) cut(seq(nrow(df)), parts, labels = 1:parts)
-              else cut(seq(nrow(df)), nrow(df) * cumsum(c(0, parts)), labels = names(parts))
-    split(df, sample(labels))
+  labels <- if (length(parts) == 1) cut(seq(nrow(df)), parts, labels = 1:parts)
+            else cut(seq(nrow(df)), nrow(df) * cumsum(c(0, parts)), labels = names(parts))
+  split(df, sample(labels))
 }
-
-
-# Compute the overlap of two intervals
-  # IMPORTANT NOTE: This is not a vectorised function, therefore DO
-  #   EITHER: rowwise %>% mutate(... intervalOverlap(...) ...) %>% ungroup
-  #   OR: mutate(... Vectorize(intervalOverlap)(...) ...)
-  # If this is not done it will return the result of the first evaluation and that will be it for all rows
-intervalOverlap <- function(a, b) max(0, min(a[2], b[2]) - max(a[1], b[1]))
 
 

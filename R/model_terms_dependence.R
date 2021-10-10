@@ -1,4 +1,6 @@
 # These functions are used when scheduling model selection steps if variable dependence is taken into account 
+library(tidyverse)
+
 
 
 # Transform a non-string term list (i.e. the tibble-list output of gen_dependent_terms) to its string version
