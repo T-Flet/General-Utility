@@ -1,7 +1,7 @@
 # These functions are used when scheduling model selection steps if variable dependence is taken into account 
 
 
-# Transform a non-string term list (i.e. of tibbles) to its string version
+# Transform a non-string term list (i.e. the tibble-list output of gen_dependent_terms) to its string version
 #   NOTE: May want to transform it to a named list of lists of dependencies:
 #           setNames(map(RESULT, ~ .x$dp), map(RESULT, ~ .x$id))
 terms_to_str <- function(term_deps) {
@@ -15,9 +15,15 @@ terms_to_str <- function(term_deps) {
 
 
 # Generate the list of variables with their dependencies, i.e. the other variables which they need to be present to exist
-gen_dependent_terms <- function(numeric_vars, factor_vars, max_power = 2, interactions = F, as_strings = T) {
-  terms <- if (interactions) powerset(rep(numeric_vars, each = max_power) %>% append(factor_vars), max_power) %>% unique()
-           else map(numeric_vars, function(v) map(1:max_power, ~ rep(v, .x))) %>% reduce(append)
+gen_dependent_terms <- function(numeric_vars, factor_vars, max_power = 2, interactions = F, no_interaction_vars = c(), as_strings = T) {
+  terms <- if (interactions) { # Powerset of the interacting variables and simple powers of non-interacting ones
+    rep(setdiff(numeric_vars, no_interaction_vars), each = max_power) %>%
+      append(setdiff(factor_vars, no_interaction_vars)) %>%
+      powerset(max_power) %>%
+      append(map(intersect(numeric_vars, no_interaction_vars), function(v) map(1:max_power, ~ rep(v, .x))) %>% unlist(recursive = F)) %>%
+      append(intersect(factor_vars, no_interaction_vars)) %>% # (works because scalars are 1-vectors in R)
+      unique()
+  } else map(numeric_vars, function(v) map(1:max_power, ~ rep(v, .x))) %>% unlist(recursive = F)
   deps <- terms %>%
     map(function(var) tibble(var) %>% group_by(var)) %>% # Using 'function' instead of ~ already names the column
     map(~ list(id = .x %>% summarise(pow = n()), dp = .x %>% mutate(pow = 1:n()) %>% ungroup()))
@@ -98,7 +104,7 @@ gen_dependent_terms_from_model <- function(mod, term_details = NULL) {
 
 
 # ## Example generation and steps if 'b' is not significant
-# AA <- gen_dependent_terms(c('a', 'b'), c('f'), max_power = 3, interactions = T, as_strings = F)
+# AA <- gen_dependent_terms(c('a', 'b', 'c'), c('f', 'd'), max_power = 3, interactions = T, no_interaction_vars = c('c', 'd'), as_strings = F)
 # AA[[length(AA)]]
 # BB <- terms_to_str(AA)
 # BB[[length(BB)]]

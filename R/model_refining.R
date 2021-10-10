@@ -4,6 +4,9 @@ library(broom)
 library(tidyverse)
 
 
+## CONTENT OF iteracted_models_OLD.R YET TO BE RE-IMPLEMENTED HERE: forward steps, gam versions, model scoring ##
+
+
 
 #### Backward steps ####
 

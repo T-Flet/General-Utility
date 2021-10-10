@@ -1,4 +1,4 @@
-
+# THE NEW VERSION OF THIS FILE IS model_refining.R
 
 
 # Extract glm model variable names lower than a given p-value
