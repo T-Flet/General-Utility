@@ -113,12 +113,12 @@ get_grid_predictions <- function(mod, response, n_points = 1000, keep_covariate_
 
 
 # Produce predicted traces for each covariate in a model by setting all other covariates to their mean (median level for factors)
-get_covariate_traces <- function(mod, n_points = 200, keep_covariate_name = F) {
+get_covariate_traces <- function(mod, data = NULL, n_points = 200, keep_covariate_name = F) {
   response <- as.character(formula(mod)[[2]])
-  df <- if (response %in% colnames(mod$data)) mod$data %>% select(-!!response) else mod$data
-  empty_df <- df %>% select(!!colnames(df)) %>% slice(1) %>%
-    mutate(across(colnames(df), ~ ifelse(is.factor(.x), levels(.x)[ceiling(length(levels(.x)) / 2)], mean(.x))))
-  empty_df <- empty_df[rep(1, n_points),]
+  if (is.null(data)) data <- mod$data
+  df <- if (response %in% colnames(data)) data %>% select(-!!response) %>% as_tibble() else data
+  empty_df <- summarise(df, across(.fns = ~ ifelse(is.factor(.x), levels(.x)[ceiling(length(levels(.x)) / 2)], mean(.x)))) %>%
+    slice(rep(1, n_points))
   
   res <- map(setNames(nm = colnames(df)), function(cn) {
     range_col <- if (is.factor(df[[cn]])) levels(df[[cn]]) else range_col <- seq(min(df[[cn]]), max(df[[cn]]), length.out = n_points)

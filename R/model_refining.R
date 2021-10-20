@@ -76,7 +76,12 @@ refine_glm_backwards <- function(gmod, threshold = 0.1, test_threshold = thresho
   
   if (!nested & (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
   
-  list(mod = mod, discarded = discarded %>% unname() %>% unlist())
+  orig_details <- term_details %>% unique_by_elem('original') # This also names them by the original field
+  final_base_terms <- (if (is_polr) tidy_polr_tolerant(mod) else tidy(mod)) %>%
+    filter(term %in% names(identified)) %>% pluck('term') %>%
+    map(~ orig_details[[.x]]$bases) %>% unlist(recursive = F) %>% unique()
+  
+  list(mod = mod, discarded = discarded %>% unname() %>% unlist(), final_base_terms = final_base_terms)
 }
 
 
@@ -86,6 +91,7 @@ refine_glm_backwards <- function(gmod, threshold = 0.1, test_threshold = thresho
 # ref <- refine_glm_backwards(mod)
 # summary(ref$mod)
 # ref$discarded
+# ref$final_base_terms
 # 
 # ## Example from a full generated formula and raw dependencies caveat
 # raw_deps <- gen_dependent_terms(c('Sepal.Length', 'Sepal.Width', 'Petal.Width'), c('Species'), max_power = 3, interactions = T)
