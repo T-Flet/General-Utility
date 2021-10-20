@@ -75,22 +75,61 @@ predict_response <- function(mod, new_data) {
 }
 
 
-# Produce predicted traces for each non-factor covariate in a model
-predict_covariate_traces <- function(mod, new_data, n_points = 500) {
-  terms <- attr(terms(formula(mod)), which = 'term.labels')
-  empty_df <- new_data %>% select(!!terms) %>% slice(1) %>%
-    mutate(across(terms, ~ ifelse(is.factor(.x), levels(.x)[1], mean(.x))))
-  empty_df <- empty_df[rep(1, n_points),]
-  res_dfs <- list()
-  for (trm in terms) {
-    if (is.factor(new_data[[trm]])) { # The baseline level gets the remainder of extra instances
-      lvs <- levels(new_data[[trm]])
-      range_col <- c(rep(lvs[1], n_points %% length(lvs)), rep(lvs, each = n_points %/% length(lvs)))
-    } else { range_col <- seq(min(new_data[[trm]]), max(new_data[[trm]]), length.out = n_points) }
-    res_dfs[[trm]] <- predict_response(mod, empty_df %>% mutate(!!trm := range_col)) %>% mutate(!!trm := range_col)
-  }
-  res_dfs
+# Produce df of new evenly spaced observations in the range of a given one
+#   NOTE: n_points is just for reference, and possibly MANY more points may be generated
+#           (because the n-th root of the number of numerical columns is ROUNDED UP)
+get_range_grid <- function(df, n_points = 1000) {
+  axes <- list()
+  
+  factors <- keep(colnames(df), ~ is.factor(df[[.x]]))
+  if (length(factors) > 0) {
+    for (fct in factors) { # Factors get all their levels as grid projection regardless of their number
+      axes[[fct]] <- levels(df[[fct]])
+      n_points <- n_points / length(axes[[fct]])
+    }
+    numericals <- setdiff(colnames(df), factors)
+  } else numericals <- colnames(df)
+  
+  axis_length <- ceiling(n_points ^ (1 / length(numericals)))
+  for (num in numericals) axes[[num]] <- seq(min(df[[num]]), max(df[[num]]), length.out = axis_length)
+  
+  do.call(expand_grid, axes)
 }
+
+
+# Produce predictions at (new) evenly spaced observations in the range of a given model's data
+get_grid_predictions <- function(mod, response, n_points = 1000, keep_covariate_name = F) {
+  df <- if (response %in% colnames(mod$data)) mod$data %>% select(-!!response) else mod$data
+  df_grid <- get_range_grid(df, n_points = n_points)
+  predictions <- predict_response(mod, df_grid)
+  
+  res <- map(setNames(nm = colnames(df_grid)), ~ predictions %>% mutate(Covariate = df_grid[[!!.x]]))
+  if (keep_covariate_name) res <- map(setNames(nm = names(res)), ~ res[[.x]] %>% rename(!!.x := Covariate))
+  res
+}
+# mod <- glm(Petal.Length ~ Species + Sepal.Length + Sepal.Length:Species + I(Sepal.Length^2) + Sepal.Width + Petal.Width + Sepal.Width:I(Petal.Width^2), iris, family = Gamma())
+# get_grid_predictions(mod, 'Petal.Length', n_points = 10000, keep_covariate_name = F)$Sepal.Length
+# get_grid_predictions(mod, 'Petal.Length', n_points = 1000, keep_covariate_name = T)$Sepal.Length
+
+
+# Produce predicted traces for each covariate in a model by setting all other covariates to their mean (median level for factors)
+get_covariate_traces <- function(mod, n_points = 200, keep_covariate_name = F) {
+  response <- as.character(formula(mod)[[2]])
+  df <- if (response %in% colnames(mod$data)) mod$data %>% select(-!!response) else mod$data
+  empty_df <- df %>% select(!!colnames(df)) %>% slice(1) %>%
+    mutate(across(colnames(df), ~ ifelse(is.factor(.x), levels(.x)[ceiling(length(levels(.x)) / 2)], mean(.x))))
+  empty_df <- empty_df[rep(1, n_points),]
+  
+  res <- map(setNames(nm = colnames(df)), function(cn) {
+    range_col <- if (is.factor(df[[cn]])) levels(df[[cn]]) else range_col <- seq(min(df[[cn]]), max(df[[cn]]), length.out = n_points)
+    predict_response(mod, empty_df %>% head(length(range_col)) %>% mutate(!!cn := range_col)) %>% mutate(Covariate := range_col)
+  })
+  if (keep_covariate_name) res <- map(setNames(nm = names(res)), ~ res[[.x]] %>% rename(!!.x := Covariate))
+  res
+}
+# mod <- glm(Petal.Length ~ Species + Sepal.Length + Sepal.Length:Species + I(Sepal.Length^2) + Sepal.Width + Petal.Width + Sepal.Width:I(Petal.Width^2), iris, family = Gamma())
+# get_covariate_traces(mod, n_points = 100, keep_covariate_name = F)
+# get_covariate_traces(mod, n_points = 50, keep_covariate_name = T)
 
 
 
