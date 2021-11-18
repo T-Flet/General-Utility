@@ -77,6 +77,28 @@ upper_zip_last <- function(...) {
 }
 
 
+# The base::match function, but with an all.equal comparison behaviour; ASSUMES SORTED xs and ys by default
+match_approx <- function(xs, ys, both_are_sorted = T) {
+  js <- seq_along(ys)
+  res <- c()
+  if (both_are_sorted) {
+    I <- 1
+    for (x in xs) {
+      z <- NA
+      for (i in I:length(js)) { if (isTRUE(all.equal(x, ys[js[i]]))) { z <- js[i] ; I <- i + 1 ; break } }
+      res <- append(res, z)
+    }
+  } else {
+    for (x in xs) {
+      z <- NA
+      for (j in js) { if (isTRUE(all.equal(x, ys[j]))) { z <- j ; break } }
+      res <- append(res, z)
+    }
+  }
+  res
+}
+
+
 
 ### Other ###
 

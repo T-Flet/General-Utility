@@ -1,6 +1,7 @@
 
 library(zoo)
 library(forecast)
+library(stinepack)
 
 library(smooth)
 library(mgcv)
@@ -8,10 +9,41 @@ library(mgcv)
 library(broom)
 library(tidyverse)
 
+# Requires the match_approx function from generic_functions.R for the fill_if_regular function
+
 
 t_x_to_ts <- function(t_or_ts, x = NULL) if (is.null(x)) zoo(coredata(t_or_ts), order.by = time(t_or_ts)) else zoo(x, order.by = t_or_ts)
 ts_to_df <- function(xs) tibble(t = time(xs), x = coredata(xs))
 set_frequency <- function(xs, freq) zoo(coredata(xs), order.by = time(xs), frequency = freq)
+
+
+# Minor modification of zoo::is.regular.zoo to return the regular interval (NA otherwise) instead of a boolean
+get_regular <- function(xs, strict = F) {
+  xs <- as.zoo(xs)
+  delta <- suppressWarnings(try(diff(as.numeric(index(xs))), silent = T))
+  if (inherits(delta, 'try-error') || anyNA(delta) || length(delta) < 1) NA
+  else if (strict) if (isTRUE(all.equal(delta, rep.int(delta[1], length(delta))))) delta[1] else NA
+  else {
+    delta <- unique(delta)
+    multiples <- isTRUE(all.equal(delta/min(delta), round(delta/min(delta))))
+    if (multiples || isTRUE(all.equal(delta, round(delta)))) min(delta) else NA
+  }
+}
+
+
+# Fill a regular series (interval provided or identified) with entries (Stineman interpolations or NAs) for the missing times
+fill_if_regular <- function(xs, reg_interval = NULL, interpolate = T) {
+  if (is.null(reg_interval)) reg_interval <- get_regular(xs)
+  if (is.na(reg_interval)) {
+    print('Series was not regular; returning original')
+    xs
+  } else {
+    good_times <- seq(time(xs)[1], time(xs)[length(xs)], by = reg_interval)
+    good_is <- match_approx(good_times, time(xs)) # vv the if_else is necessary because good_times are only approximately equal to the real times
+    res <- zoo(coredata(xs)[good_is], order.by = if_else(is.na(time(xs)[good_is]), good_times, time(xs)[good_is]))
+    if (interpolate) na.stinterp(res) else res
+  }
+}
 
 
 # Minor modification of forecast::findfrequency
@@ -95,7 +127,6 @@ tidy_adam <- function(mod) {
 # Dataframe of actuals, fitted values, residuals and all states (e.g. level, trend, seasonal, ARIMA components, ...)
 #   NOTE: cut_non_actual_times removes the initial rows for which there is no true data (states columns may have values, but the others have NAs)
 adam_all_states <- function(mod, cut_non_actual_times = T) {
-  # as_tibble(mod$states) %>% mutate(Time = time(mod$states), .before = 1)
   data <- cbind(actuals(mod), fitted(mod), mod$states, residuals(mod))
   colnames(data) <- c('actuals', 'fitted', colnames(mod$states), 'residuals')
   if (cut_non_actual_times) data <- data[which(!is.na(data$actuals))[1]:nrow(data)]
@@ -134,6 +165,23 @@ predict_adam <- function(mod, new_data, interval = NULL, only_new_data = F, draw
 }
 
 
+
+## Missing values functions
+
+# AA <- read_csv('https://r-data.pmagunia.com/system/files/datasets/dataset-58057.csv')
+# AA <- AA[! index(AA) %in% sample.int(nrow(AA), nrow(AA) %/% 10),]
+# AA <- t_x_to_ts(AA$time, AA$AirPassengers)
+# is.regular(AA)
+# get_regular(AA)
+# filled_AA <- fill_if_regular(AA)
+# length(filled_AA) > length(AA)
+# all(filled_AA == AA) # True because comparing only on same indices
+# plot(AA)
+# plot(AirPassengers)
+# plot(filled_AA)
+
+
+## Model-related functions
 
 # # AA <- t_x_to_ts(USAccDeaths)
 # # AA <- t_x_to_ts(lynx)
