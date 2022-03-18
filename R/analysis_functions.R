@@ -1,4 +1,139 @@
+library(moments)
+library(fitdistrplus)
+library(metRology)
+library(GGally)
+library(plotly)
 library(tidyverse)
+
+
+
+### Summary ###
+
+
+# Produce summary statistics for a list of vectors (a df also works as input; columns are taken to be said vectors)
+  # The distributions argument should be F, NULL or a list of the outputs of the distribution_identifier function for each input variable:
+  #   for F no additional column is added; for NULL the distribution_identifier function is called for each variable and
+  #   a column for the str value of the best distribution is added; same if an output is provided directly
+batch_summaries <- function(data, distributions = NULL) {
+  data <- map(data, ~ discard(., is.na)) # Beter here than for each case
+  res <- map(data, function(v) {list(
+    Mean = mean(v), SD = sd(v), Var = var(v),
+    Skewness = skewness(v), Kurtosis = kurtosis(v),
+    Q1 = quantile(v, 0.25), Median = median(v), Q3 = quantile(v, 0.75)
+  )}) %>% bind_rows() %>% add_column(Name = names(data), .before = 1) %>%
+    rowwise() %>%
+    mutate(Outliers = data[[Name]] %>% keep(function(x) (x < Q1-1.5*(Q3-Q1)) || (x > Q3+1.5*(Q3-Q1))) %>% length())
+  
+  if (isFALSE(distributions)) res else {
+    if (is.null(distributions)) distributions <- map(data, distribution_identifier)
+    res %>% add_column(Distribution = map(distributions, ~ .[[1]]$str) %>% unlist())
+  }
+}
+
+
+# Generate the data and optionally plot a distribution
+get_density <- function(name_with_no_d, params, range = seq(-10, 10, length.out = 100), plot = F) {
+  pdf <- function(x) do.call(paste0('d', name_with_no_d), c(list(x = x), params))
+  df <- tibble(x = range, pdf = pdf(x))
+  if (plot) ggplot(df) + geom_line(aes(x, pdf)) + ggtitle(paste0(name_with_no_d, '(', paste(map(params, ~ round(., 3)), collapse = ', '), ')'))
+  else df
+}
+
+
+# Generate tags defining the domain of the given data
+domain_tags <- function(xs) {
+  xs <- xs %>% discard(is.na)
+  uniq <- unique(xs)
+  poss_tags <- list()
+  if (is.numeric(xs)) {
+    poss_tags <- c(poss_tags, list(
+      `Non-Negative` = min(xs) >= 0,
+      `Non-Positive` = max(xs) <= 0,
+      `Non-Zero` = all(xs != 0),
+      `[0,1]` = 0 <= min(xs) & max(xs) <= 1
+    ))
+    poss_tags <- c(poss_tags, if (all(as.integer(xs) == xs)) { list(Integer = T) } else { list(Real = T) })
+  } else {
+    poss_tags <- c(poss_tags, list(
+      Factor = T,
+      Binary = length(uniq) == 2
+    ))
+    if (is.logical(xs)) {
+      poss_tags <- c(poss_tags, list(Boolean = T))
+    }
+  }
+  poss_tags %>% keep(identity) %>% names()
+}
+
+
+# Identify and fit a distribution to the given data (domain tags are generated if not known)
+distribution_identifier <- function(xs, tags = domain_tags(xs), density_traces = F) {
+  distr_doms <- list(
+    beta = c('[0,1]', 'Real'),
+    binom = c('Non-Negative', 'Integer'), # No need for Bernoulli and 'Binary' or 'Boolean'
+    cauchy = c(),
+    chisq = c('Non-Negative'),
+    exp = c('Non-Negative'),
+    f = c('Non-Negative'),
+    gamma = c('Non-Negative', 'Non-Zero'),
+    geom = c('Non-Negative', 'Non-Zero', 'Integer'),
+    hyper = c('Non-Negative', 'Integer'),
+    lnorm = c('Non-Negative'),
+    multinom = c('Non-Negative', 'Integer'), # Here too, but the only option if 'Factor'
+    nbinom = c('Non-Negative', 'Integer'),
+    norm = c(),
+    pois = c('Non-Negative', 'Integer'),
+    t.scaled = c(), # Using t.scaled from metRology because the default t is just bad
+    unif = c(),
+    weibull = c('Non-Negative')
+  )
+  
+  xs <- xs %>% discard(is.na)
+  if ('Factor' %in% tags) { distributions <- c(multinom = 'multinom') }
+  else {
+    if ('Non-Positive' %in% tags) {
+      xs <- -xs
+      tags <- tags %>% keep(~ . != 'Non-Positive') %>% append('Non-Negative')
+    }
+    distributions <- map(distr_doms, ~ setdiff(., tags)) %>%
+      keep(~ length(.) == 0) %>% names() %>% setNames(nm = .)
+  
+    params <- list( # Starting values or fixed arguments may be required; reasonable results can be obtained even from arbitrary starting values
+      binom = list(start = list(size = max(xs), prob = 0.5)),
+      chisq = list(start = list(df = 3)),
+      f = list(start = list(df1 = 3, df2 = 3)),
+      hyper = list(start = list(m = max(xs), n = max(xs) / 2, k = 1.5 * max(xs))),
+      t.scaled = list(start = list(df = 3, mean = mean(xs), sd = sd(xs)))
+    )
+  }
+  
+  get_distr_str <- function(distr) paste0(distr$distname, '(',
+      paste(map(names(distr$estimate), function(nm)
+        paste(nm, '=', round(distr$estimate[[nm]], 3))), collapse = ', ' ), ')')
+  
+  res_distrs <- map(distributions, function(distr) { tryCatch(
+      do.call(fitdist, c(list(data = xs, distr = distr), if (distr %in% names(params)) params[[distr]] else list())),
+      error = function(e) as.character(e) )}) %>% discard(~ length(.) == 1) %>%
+    map(function(res) list(distr = res, bic = res$bic, str = get_distr_str(res))) %>% sort_by_elem(2)
+  
+  if (density_traces) map(res_distrs, function(rd) {
+    data_range <- if ('Integer' %in% distr_doms[[rd$distr$distname]]) seq(min(xs), max(xs)) else seq(min(xs), max(xs), length.out = 100)
+    c(rd, get_density(rd$distr$distname, rd$distr$estimate, data_range)) })
+  else res_distrs
+}
+
+
+# Python-compatible Plotly JSON for a given ggplot, e.g. ggpairs(df)
+  # Although https://github.com/plotly/plotly.R/issues/2009, an unrecognised 'key' field can still occur,
+  # therefore use this on the Python side: plotly.io.from_json(plotly_json, skip_invalid = True)
+ggplotly_json <- function(gg_plot, even_safer = T) {
+  pl <- ggplotly(gg_plot)
+  (if (even_safer) plotly:::to_JSON(plotly_build(pl)$x[c('data', 'layout', 'config')]) else plotly_json(pl, F, F)) %>%
+    str_replace_all(fixed('transparent'), '#ffffff') %>%
+    str_replace_all(fixed(',"frame":null'), '') %>%
+    str_replace_all(fixed('"family":"",'), '') %>%
+    str_replace_all(fixed(',"linetype":[]'), '')
+}
 
 
 

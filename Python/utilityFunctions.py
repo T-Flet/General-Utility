@@ -11,6 +11,11 @@ _b = TypeVar('_b')
 
 ## Higher-Order Functions
 
+############
+# BETTER BASE VERSION: do not provide a condition c but a more generic function h which takes in the xs and returns selected x and new remaining xs
+#       This removes the non-deterministic-ness from this function and leaves it to h (e.g. h selecting the first x satisfying c is so)
+############
+
 def foldq(f: Callable[[_b, _a], _b], g: Callable[[_b, _a, List[_a]], List[_a]], c: Callable[[_a], bool], xs: List[_a], acc: _b) -> Tuple[_b, List[_a]]:
     r'''
     Fold-like higher-order function where xs is traversed by consumption conditional on c and remaining xs are updated by g (therefore consumption order is not known a priori):
@@ -81,7 +86,7 @@ def topological_sort(nodes_incoming_edges_tuples: Iterable[Tuple[_a, List[_b]]])
                   lambda x: not x[1], nodes_incoming_edges_tuples, [])
 
 
-def flatten(list_of_lists: Iterable[List]) -> List: return list(chain.from_iterable(list_of_lists))
+def flatten(list_of_lists: Iterable[Iterable]) -> List: return list(chain.from_iterable(list_of_lists))
 
 
 def unzip(list_of_ntuples: Iterable[Iterable]) -> List[List]: return [list(t) for t in zip(*list_of_ntuples)]
@@ -116,6 +121,21 @@ def diff_h(xs: Iterable[_a], ys: Iterable[_a]) -> Set[_a]: return set(xs) - set(
 
 
 def chunk(xs: Iterable[_a], n: int) -> Generator[_a, None, None]: return (xs[i:i + n] for i in range(0, len(xs), n))
+
+
+def intersperse(xs: Iterable[_a], ys: Iterable[_a], n: int, prepend = False, append = False) -> Iterable[_a]:
+    '''Intersperse elements of ys every n elements of xs'''
+    n += 1 # Moving this after the assert would save the two (n - 1)s, but this way all n expressions are coherent
+    unwanted_append = not len(xs) % (n - 1) and not append
+    assert len(ys) >= (m := prepend + len(xs) // (n - 1) - unwanted_append), f'ys has too few elements ({len(ys)}); at least {m} are needed to cover xs with the given parameters'
+    if not prepend: ys = [None] + ys # The +-1s below are respectively for: indices starting at 0, the prepended y, context
+    return [xs[i - 1 - i // n] if i % n else ys[i // n] for i in range(1 + len(xs) + len(xs) // (n - 1) - unwanted_append)][not prepend:]
+
+def intersperse_val(xs: Iterable[_a], y: _a, n: int, prepend = False, append = False) -> Iterable[_a]:
+    '''Intersperse y every n elements of xs'''
+    n += 1 # The +-1s below are respectively for: indices starting at 0, the prepended y, context
+    res = [xs[i - 1 - i // n] if i % n else y for i in range(1 + len(xs) + len(xs) // (n - 1))]
+    return res[not prepend : len(res) - (not len(xs) % (n - 1) and not append)]
 
 
 
