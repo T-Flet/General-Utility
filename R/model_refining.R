@@ -61,7 +61,7 @@ refine_glm_backwards <- function(gmod, threshold = 0.1, test_threshold = thresho
   if (!nested) { # If the intercept is not significant remove it and run again
     removable <- (if (is_polr) tidy_polr_tolerant(mod) else tidy(mod)) %>% filter(term == '(Intercept)')
 
-    if (nrow(removable) != 0 & removable[1,]$p.value > threshold) {
+    if (nrow(removable) != 0 && removable[1,]$p.value > threshold) {
       new_mod <- update(mod, formula. = ~ . + 0)
       test_res <- anova(new_mod, mod, test = test)
       if (test_res[2, ncol(test_res)] > test_threshold) {
@@ -74,7 +74,7 @@ refine_glm_backwards <- function(gmod, threshold = 0.1, test_threshold = thresho
     mod <- redo$mod
   }
   
-  if (!nested & (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
+  if (!nested && (length(failed_discards) > 0)) { print(paste('Failed discards by', test, 'test:', failed_discards)) }
   
   orig_details <- term_details %>% unique_by_elem('original') # This also names them by the original field
   final_base_terms <- (if (is_polr) tidy_polr_tolerant(mod) else tidy(mod)) %>%

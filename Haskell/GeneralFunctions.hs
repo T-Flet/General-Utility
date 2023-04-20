@@ -1,7 +1,7 @@
 ---- General Functions
 --
 --      Author:
---          Dr-Lord
+--          T-Flet
 --
 --      Version:
 --          1.5 - 16-17/07/2015

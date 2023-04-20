@@ -1,5 +1,7 @@
 library(moments)
+library(entropy)
 library(fitdistrplus)
+library(mclust)
 library(metRology)
 library(GGally)
 library(plotly)
@@ -15,23 +17,40 @@ library(tidyverse)
   #   for F no additional column is added; for NULL the distribution_identifier function is called for each variable and
   #   a column for the str value of the best distribution is added; same if an output is provided directly
 batch_summaries <- function(data, distributions = NULL) {
-  data <- map(data, ~ discard(., is.na)) # Beter here than for each case
-  res <- map(data, function(v) {list(
+  data <- map(data, ~ discard(., is.na)) # Better here than for each case
+  
+  res <- keep(data, is.numeric) %>% map(function(v) {list(
     Mean = mean(v), SD = sd(v), Var = var(v),
     Skewness = skewness(v), Kurtosis = kurtosis(v),
     Q1 = quantile(v, 0.25), Median = median(v), Q3 = quantile(v, 0.75)
-  )}) %>% bind_rows() %>% add_column(Name = names(data), .before = 1) %>%
-    rowwise() %>%
+  )})
+  res <- bind_rows(res) %>% add_column(Name = names(res), .before = 1)
+  if (nrow(res) != 0) res <- rowwise(res) %>%
     mutate(Outliers = data[[Name]] %>% keep(function(x) (x < Q1-1.5*(Q3-Q1)) || (x > Q3+1.5*(Q3-Q1))) %>% length())
   
+  factor_res <- discard(data, is.numeric) %>% map(function(f) {
+    freqs <- table(f) / length(f)
+    mode_lvl <- which.max(freqs)
+    bit_entropy <- entropy.empirical(freqs, unit = 'log2')
+    list(N_Levels = length(freqs), Mode = names(freqs[mode_lvl]), Mode_Freq = unname(freqs[mode_lvl]),
+         Bit_Entropy = bit_entropy, Scaled_Entropy = bit_entropy / log2(length(freqs)))#, value_proportions = as.list(freqs))
+  })
+  factor_res <- bind_rows(factor_res) %>% add_column(Name = names(factor_res), .before = 1)
+  res <- bind_rows(res, factor_res)
+
   if (isFALSE(distributions)) res else {
-    if (is.null(distributions)) distributions <- map(data, distribution_identifier)
+    if (is.null(distributions)) {
+      distributions <- keep(data, is.numeric) %>% map(distribution_identifier)
+      distributions <- c(distributions, discard(data, is.numeric) %>% map(distribution_identifier))
+    }
     res %>% add_column(Distribution = map(distributions, ~ .[[1]]$str) %>% unlist())
   }
 }
 
 
 # Generate the data and optionally plot a distribution
+#   NOTE: the range argument should be made to be integer for discrete distributions,
+#           otherwise a straight line at 0 is likely to be produced
 get_density <- function(name_with_no_d, params, range = seq(-10, 10, length.out = 100), plot = F) {
   pdf <- function(x) do.call(paste0('d', name_with_no_d), c(list(x = x), params))
   df <- tibble(x = range, pdf = pdf(x))
@@ -67,7 +86,14 @@ domain_tags <- function(xs) {
 
 
 # Identify and fit a distribution to the given data (domain tags are generated if not known)
-distribution_identifier <- function(xs, tags = domain_tags(xs), density_traces = F) {
+#   NOTE: by default if the best identified distribution is a uniform one then a finite Gaussian
+#         mixture model is attempted (and discarded if only one is the best fit).
+#         This is noteworthy because the object type of the distr field of one element of the
+#         might be different from all others, breaking functions equipped to only handle fitdist
+#         outputs. This behaviour can be prevented with try_gauss_mix_on_unif = F.
+#   Also note that if the given data is a factor no traces are returned even for density_traces = T.
+#   Also also note that without unlimited_gauss_mix_n = T mixtures will only be accepted if between 2 and 4 inclusive.
+distribution_identifier <- function(xs, tags = domain_tags(xs), forced_dists = NULL, density_traces = F, try_gauss_mix_on_unif = T, unlimited_gauss_mix_n = F) {
   distr_doms <- list(
     beta = c('[0,1]', 'Real'),
     binom = c('Non-Negative', 'Integer'), # No need for Bernoulli and 'Binary' or 'Boolean'
@@ -79,7 +105,7 @@ distribution_identifier <- function(xs, tags = domain_tags(xs), density_traces =
     geom = c('Non-Negative', 'Non-Zero', 'Integer'),
     hyper = c('Non-Negative', 'Integer'),
     lnorm = c('Non-Negative'),
-    multinom = c('Non-Negative', 'Integer'), # Here too, but the only option if 'Factor'
+    # multinom = c('Non-Negative', 'Integer'), # Here as well
     nbinom = c('Non-Negative', 'Integer'),
     norm = c(),
     pois = c('Non-Negative', 'Integer'),
@@ -87,19 +113,26 @@ distribution_identifier <- function(xs, tags = domain_tags(xs), density_traces =
     unif = c(),
     weibull = c('Non-Negative')
   )
-  
+
   xs <- xs %>% discard(is.na)
-  if ('Factor' %in% tags) { distributions <- c(multinom = 'multinom') }
-  else {
+  if ('Factor' %in% tags) {
+    freqs <- table(xs) / length(xs)
+    return(list(cat = list(distr = 'No object; use dcat, qcat, rcat if necessary', bic = 0, str = paste0('cat(k = ', length(freqs), ', ps = {', paste(map(freqs, ~ round(.,3)), collapse = ', '), '})'))))
+  } else {
     if ('Non-Positive' %in% tags) {
       xs <- -xs
       tags <- tags %>% keep(~ . != 'Non-Positive') %>% append('Non-Negative')
     }
     distributions <- map(distr_doms, ~ setdiff(., tags)) %>%
       keep(~ length(.) == 0) %>% names() %>% setNames(nm = .)
-  
-    params <- list( # Starting values or fixed arguments may be required; reasonable results can be obtained even from arbitrary starting values
-      binom = list(start = list(size = max(xs), prob = 0.5)),
+    
+    # Starting values or fixed arguments may be required; reasonable results can be obtained even from arbitrary starting values
+    params <- list(
+      ############## TO DO: for binom, remove fix.arg from here and instead try a few fixed values
+      # in the res_distrs map
+      #   (by checking distr == 'binom' and then trying, say, from max(xs) to round(1.5 * max(xs))
+      binom = list(fix.arg = list(size = max(xs)), start = list(prob = 0.5), method = 'mse'),
+      multinom = list(start = list(size = max(xs), prob = 1 / max(xs))),
       chisq = list(start = list(df = 3)),
       f = list(start = list(df1 = 3, df2 = 3)),
       hyper = list(start = list(m = max(xs), n = max(xs) / 2, k = 1.5 * max(xs))),
@@ -107,20 +140,54 @@ distribution_identifier <- function(xs, tags = domain_tags(xs), density_traces =
     )
   }
   
-  get_distr_str <- function(distr) paste0(distr$distname, '(',
-      paste(map(names(distr$estimate), function(nm)
-        paste(nm, '=', round(distr$estimate[[nm]], 3))), collapse = ', ' ), ')')
+  if (!is.null(forced_dists)) distributions <- forced_dists %>% setNames(nm = .)
+
+  # Produce a model name with parameters for individual fitdistr outputs
+  get_distr_str <- function(distr) {
+    all_params <- if ('fix.arg' %in% names(distr)) c(distr$fix.arg, distr$estimate) else distr$estimate
+    paste0(distr$distname, '(',
+      paste(map(names(all_params), function(nm)
+        paste(nm, '=', round(all_params[[nm]], 3))), collapse = ', ' ), ')')
+  }
   
+  # Simple distributions
   res_distrs <- map(distributions, function(distr) { tryCatch(
       do.call(fitdist, c(list(data = xs, distr = distr), if (distr %in% names(params)) params[[distr]] else list())),
-      error = function(e) as.character(e) )}) %>% discard(~ length(.) == 1) %>%
+      error = function(e) as.character(e) )}) %>%
+      discard(~ length(.) == 1) %>% discard(~ any(is.na(.$estimate))) %>%
     map(function(res) list(distr = res, bic = res$bic, str = get_distr_str(res))) %>% sort_by_elem(2)
-  
+
+  # Gaussian finite mixture
+  if (try_gauss_mix_on_unif && (!'Factor' %in% tags) && (names(res_distrs)[1] == 'unif')) {
+    finite_mix <- densityMclust(xs, plot = F)
+    if (finite_mix$G > 1 && (unlimited_gauss_mix_n || finite_mix$G <= 4))
+      res_distrs <- c(res_distrs, list('gauss_mix' = 
+        list(distr = finite_mix, bic = finite_mix$bic, str = get_mclust_str(finite_mix), n_mix = finite_mix$G)
+      )) %>% sort_by_elem(2)
+  }
+   
   if (density_traces) map(res_distrs, function(rd) {
-    data_range <- if ('Integer' %in% distr_doms[[rd$distr$distname]]) seq(min(xs), max(xs)) else seq(min(xs), max(xs), length.out = 100)
-    c(rd, get_density(rd$distr$distname, rd$distr$estimate, data_range)) })
+    data_range <- if ((!'n_mix' %in% names(rd)) && 'Integer' %in% distr_doms[[rd$distr$distname]]) seq(min(xs), max(xs)) else seq(min(xs), max(xs), length.out = 100)
+    if ('n_mix' %in% names(rd)) c(rd, tibble(x = data_range, pdf = predict.densityMclust(finite_mix, newdata = data_range)))
+    else c(rd, get_density(rd$distr$distname, {
+        if ('fix.arg' %in% names(rd$distr)) c(rd$distr$fix.arg, rd$distr$estimate) else rd$distr$estimate
+      }, data_range)) })
   else res_distrs
 }
+# distribution_identifier(rbinom(50, 10, 0.75), forced_dists = c('binom'), try_gauss_mix_on_unif = T)
+# map(list(test = rbinom(50, 10, 0.75)), ~ distribution_identifier(., forced_dists = c('binom'), density_traces = T, try_gauss_mix_on_unif = F))
+# distribution_identifier(rhyper(50, 10, 10, 10), forced_dists = c('hyper'))
+# map(list(test = rhyper(50, 10, 10, 10)), ~ distribution_identifier(., forced_dists = c('hyper'), density_traces = T, try_gauss_mix_on_unif = F))
+# distribution_identifier(iris$Sepal.Length, forced_dists = c('norm'))
+
+
+# Produce a model name with parameters for a given (mclust) Gaussian finite mixture fit
+get_mclust_str <- function(mod) {
+  props <- if ('pro' %in% names(mod$parameters)) mod$parameters$pro else rep(1/mod$G, mod$G)
+  paste(map(seq(mod$G), function(i) paste0(
+    round(props[i], 3), ' ', 'norm(mean = ', round(mod$parameters$mean[i], 3), ', variance = ', round(mod$parameters$variance$sigmasq[i], 3), ')'
+  )), collapse = ' + ') }
+# get_mclust_str(densityMclust(c(rnorm(50, mean = 0, sd = 1), rnorm(50, mean = 2, sd = 0.5))))
 
 
 # Python-compatible Plotly JSON for a given ggplot, e.g. ggpairs(df)
@@ -157,7 +224,7 @@ df_factor_lv_stats <- function(df, response_name, factor_name) {
 glm_factor_coefs <- function(mod, factor_name) {
   method <- paste(deparse(mod$call), collapse = '') %>% str_extract('^([^\\(]+)')
   data <- mod[[ifelse(method %in% c('polr', 'multinom'), 'model', 'data')]]
-  
+
   lvs <- levels(data[[factor_name]])
   lvs_long <- map(lvs, ~ paste0(factor_name, .)) %>% unlist()
 
@@ -174,7 +241,7 @@ glm_factor_coefs <- function(mod, factor_name) {
     mutate(Var = lvs) %>%
     select(-`t value`)
   colnames(res) <- c('Level', 'Coef', 'SE', 'P Val')
-  
+
   factor_stats <- df_factor_lv_stats(data, as.character(mod$formula[[2]]), factor_name)
   inner_join(factor_stats, res, by = 'Level')
 }
@@ -184,12 +251,25 @@ glm_factor_coefs <- function(mod, factor_name) {
 ### Prediction ###
 
 
-# Produce predictions with s.e. levels (put through the link function) from a glm and new data
-predict_response <- function(mod, new_data) {
+# Produce predictions with s.e. levels (put through the link function) from a glm and new data.
+# The remaining arguments trigger additional outputs beside the raw prediction (and interval) for non-categorical models:
+#   bounds for a given probability (to be interpreted as central or not)
+#   or probabilities of values being above or below a given bound.
+# Specifically:
+#   If a custom_prob is given, then the Custom_Lower and Custom_Upper columns are added
+#     - if prob_as_central, then custom_prob is centred and the two columns are the bounds of the corresponding CI
+#     - if not, then the two columns are each a bound for custom_prob of the values being above or below them
+#   If a custom_bound is given then the Prob_Below_Bound and Prob_Above_Bound columns are added
+predict_response <- function(mod, new_data, custom_prob = NULL, prob_as_central = F, custom_bound = NULL) {
   method <- paste(deparse(mod$call), collapse = '') %>% str_extract('^([^\\(]+)')
   if (method == 'multinom' | method == 'polr') {
     ppreds <- predict(mod, newdata = new_data, type = 'probs')
-    tib <- if (is.null(nrow(ppreds))) { as_tibble_row(ppreds) } else { as_tibble(ppreds) }
+    if (length(mod$lev) == 2) { # multinom returns a bare list of probs if only 2 levels; polr works only from 3 up
+      tib <- tibble(XX = ppreds) %>% mutate(YY = 1 - XX)
+      colnames(tib) <- mod$lev
+    } else {
+      tib <- if (is.null(nrow(ppreds))) { as_tibble_row(ppreds) } else { as_tibble(ppreds) }
+    }
     tib <- rowid_to_column(tib)
     tib %>%
       gather(Pred, Prob, -1) %>% # Assume response is the first column
@@ -198,16 +278,46 @@ predict_response <- function(mod, new_data) {
       left_join(tib, by = 'rowid') %>% select(-rowid)
   } else {
     preds <- predict(mod, newdata = new_data, type = 'link', se.fit = T)
-    critval <- qnorm(0.975) # ~ 95% CI
-    tibble(Pred = preds$fit,
-           Upper = preds$fit + (critval * preds$se.fit),
-           Lower = preds$fit - (critval * preds$se.fit)) %>%
+    res <- tibble(Pred = preds$fit, # Central 95% CI below, i.e. same as preds$fit +/- (qnorm(0.975) * preds$se.fit)
+      Lower = qnorm(0.975, preds$fit, preds$se.fit, lower.tail = F),
+      Upper = qnorm(0.975, preds$fit, preds$se.fit))
+    if (!is.null(custom_prob)) {
+      custom_prob <- if (prob_as_central) (1 + custom_prob) / 2 else custom_prob # I.e. 1 - (1 - custom_prob) / 2 if it is meant to be central
+      res <- res %>% mutate( # Custom bounds
+        Custom_Lower = qnorm(custom_prob, preds$fit, preds$se.fit, lower.tail = F),
+        Custom_Upper = qnorm(custom_prob, preds$fit, preds$se.fit))
+    }
+    
+    res <- res %>%
       mutate(across(everything(), mod$family$linkinv)) %>%
-      mutate(TempUpper = Upper) %>% # These final lines are because the inverse link may not be monotonely increasing
-      mutate(Upper = if_else(TempUpper >= Lower, TempUpper, Lower), Lower = if_else(TempUpper >= Lower, Lower, TempUpper)) %>%
-      select(-TempUpper)
+      mutate(TempLower = Lower) %>% # These final lines are because the inverse link may not be monotonically increasing
+      mutate(Lower = if_else(TempLower >= Upper, Upper, TempLower),
+             Upper = if_else(TempLower >= Upper, TempLower, Upper)) %>%
+      select(-TempLower)
+    if (!is.null(custom_prob)) res <- res %>% mutate(TempLower = Custom_Lower) %>% # same as above
+      mutate(Custom_Lower = if_else(TempLower >= Custom_Upper, Custom_Upper, TempLower),
+             Custom_Upper = if_else(TempLower >= Custom_Upper, TempLower, Custom_Upper)) %>%
+      select(-TempLower)
+
+    if (!is.null(custom_bound)) {
+      linear_bound <- mod$family$linkfun(custom_bound)
+      res <- res %>% mutate(
+               Prob_Below_Bound = pnorm(linear_bound, preds$fit, preds$se.fit)) %>%
+        mutate(Prob_Above_Bound = 1 - Prob_Below_Bound) %>% # These lines below are because the inverse link may not be monotonically increasing
+        mutate(TempLinkIsInverting = xor(linear_bound > preds$fit, custom_bound > Pred)) %>%
+        mutate(Prob_Below_Bound = if_else(TempLinkIsInverting, 1 - Prob_Below_Bound, Prob_Below_Bound),
+               Prob_Above_Bound = if_else(TempLinkIsInverting, 1 - Prob_Above_Bound, Prob_Above_Bound)) %>%
+        select(-TempLinkIsInverting)
+    }
+    
+    res
   }
 }
+# tibble(iris) %>% head()
+# predict_response(glm(Sepal.Length ~ ., data = iris), new_data = tibble(iris) %>% head(),
+#                  custom_prob = 0.9, prob_as_central = F, custom_bound = 5)
+# predict_response(glm(Sepal.Length ~ ., data = iris, family = Gamma()), new_data = tibble(iris) %>% head(),
+#                  custom_prob = 0.9, prob_as_central = F, custom_bound = 5)
 
 
 # Produce df of new evenly spaced observations in the range of a given one
@@ -215,7 +325,7 @@ predict_response <- function(mod, new_data) {
 #           (because the n-th root of the number of numerical columns is ROUNDED UP)
 get_range_grid <- function(df, n_points = 1000) {
   axes <- list()
-  
+
   factors <- keep(colnames(df), ~ is.factor(df[[.x]]))
   if (length(factors) > 0) {
     for (fct in factors) { # Factors get all their levels as grid projection regardless of their number
@@ -224,10 +334,10 @@ get_range_grid <- function(df, n_points = 1000) {
     }
     numericals <- setdiff(colnames(df), factors)
   } else numericals <- colnames(df)
-  
+
   axis_length <- ceiling(n_points ^ (1 / length(numericals)))
   for (num in numericals) axes[[num]] <- seq(min(df[[num]]), max(df[[num]]), length.out = axis_length)
-  
+
   do.call(expand_grid, axes)
 }
 
@@ -237,7 +347,7 @@ get_grid_predictions <- function(mod, response, n_points = 1000, keep_covariate_
   df <- if (response %in% colnames(mod$data)) mod$data %>% select(-!!response) else mod$data
   df_grid <- get_range_grid(df, n_points = n_points)
   predictions <- predict_response(mod, df_grid)
-  
+
   res <- map(setNames(nm = colnames(df_grid)), ~ predictions %>% mutate(Covariate = df_grid[[!!.x]]))
   if (keep_covariate_name) res <- map(setNames(nm = names(res)), ~ res[[.x]] %>% rename(!!.x := Covariate))
   res
@@ -252,11 +362,11 @@ get_covariate_traces <- function(mod, data = NULL, n_points = 200, keep_covariat
   response <- as.character(formula(mod)[[2]])
   if (is.null(data)) data <- mod$data
   df <- if (response %in% colnames(data)) data %>% select(-!!response) %>% as_tibble() else data
-  empty_df <- summarise(df, across(.fns = ~ ifelse(is.factor(.x), levels(.x)[ceiling(length(levels(.x)) / 2)], mean(.x)))) %>%
+  empty_df <- summarise(df, across(.fns = ~ ifelse(is.factor(.x), levels(.x)[ceiling(length(levels(.x)) / 2)], mean(.x, na.rm = T)))) %>%
     slice(rep(1, n_points))
-  
+
   res <- map(setNames(nm = colnames(df)), function(cn) {
-    range_col <- if (is.factor(df[[cn]])) levels(df[[cn]]) else range_col <- seq(min(df[[cn]]), max(df[[cn]]), length.out = n_points)
+    range_col <- if (is.factor(df[[cn]])) levels(df[[cn]]) else range_col <- seq(min(df[[cn]], na.rm = T), max(df[[cn]], na.rm = T), length.out = n_points)
     predict_response(mod, empty_df %>% head(length(range_col)) %>% mutate(!!cn := range_col)) %>% mutate(Covariate := range_col)
   })
   if (keep_covariate_name) res <- map(setNames(nm = names(res)), ~ res[[.x]] %>% rename(!!.x := Covariate))
